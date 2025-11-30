@@ -106,7 +106,7 @@ jobs:
           publish_branch: gh-pages
           force_orphan: true
           enable_jekyll: false
-          cname: false
+          exclude_assets: '.github,README.md,CONTRIBUTING.md,LICENSE,build.ps1,localtest.ps1'
       
       - name: Create Release
         uses: softprops/action-gh-release@v1
