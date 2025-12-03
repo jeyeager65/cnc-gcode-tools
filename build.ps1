@@ -77,6 +77,32 @@ $builds = @(
     <script src="js/animator.js"></script>
     <script src="js/controller.js"></script>
 "@
+    },
+    @{
+        Name = "Font Creator"
+        SourceHtml = "src/font-creator.html"
+        OutputName = "fontcreator"
+        JsFiles = @(
+            "src/js/parser.js",
+            "src/js/camera.js",
+            "src/js/renderer2d.js",
+            "src/js/renderer3d.js",
+            "src/js/animator.js",
+            "src/js/controller.js",
+            "src/js/font-creator-controller.js",
+            "src/js/font-creator-app.js"
+        )
+        ScriptTags = @"
+    <script src="js/parser.js"></script>
+    <script src="js/camera.js"></script>
+    <script src="js/renderer2d.js"></script>
+    <script src="js/renderer3d.js"></script>
+    <script src="js/animator.js"></script>
+    <script src="js/controller.js"></script>
+    <script src="js/font-creator-controller.js"></script>
+    <script src="js/font-creator-app.js"></script>
+"@
+        CssFiles = @("src/css/common.css", "src/css/font-creator.css")
     }
 )
 
@@ -91,31 +117,24 @@ foreach ($build in $builds) {
     # Inline CSS
     Write-Host "Inlining CSS..." -ForegroundColor Cyan
     
-    # Inline common.css
-    $commonCssFile = "src/css/common.css"
-    if (Test-Path $commonCssFile) {
-        $cssContent = Get-Content $commonCssFile -Raw
-        # Remove CSS comments
-        $cssContent = $cssContent -replace '/\*[\s\S]*?\*/', ''
-        # Remove extra whitespace
-        $cssContent = $cssContent -replace '\s+', ' ' -replace '\s*([{}:;,])\s*', '$1'
-        $cssLink = '<link rel="stylesheet" href="css/common.css">'
-        $inlineStyle = "<style>$cssContent</style>"
-        $html = $html -replace [regex]::Escape($cssLink), $inlineStyle
-    }
+    # Use custom CSS files if specified, otherwise default to common.css and fluidnc.css
+    $cssFiles = if ($build.CssFiles) { $build.CssFiles } else { @("src/css/common.css", "src/css/fluidnc.css") }
     
-    # Inline fluidnc.css if it exists in the HTML
-    $fluidncCssFile = "src/css/fluidnc.css"
-    if (Test-Path $fluidncCssFile) {
-        $fluidncCssContent = Get-Content $fluidncCssFile -Raw
-        # Remove CSS comments
-        $fluidncCssContent = $fluidncCssContent -replace '/\*[\s\S]*?\*/', ''
-        # Remove extra whitespace
-        $fluidncCssContent = $fluidncCssContent -replace '\s+', ' ' -replace '\s*([{}:;,])\s*', '$1'
-        $fluidncCssLink = '<link rel="stylesheet" href="css/fluidnc.css">'
-        if ($html -match [regex]::Escape($fluidncCssLink)) {
-            $inlineFluidncStyle = "<style>$fluidncCssContent</style>"
-            $html = $html -replace [regex]::Escape($fluidncCssLink), $inlineFluidncStyle
+    foreach ($cssFile in $cssFiles) {
+        if (Test-Path $cssFile) {
+            $cssContent = Get-Content $cssFile -Raw
+            # Remove CSS comments
+            $cssContent = $cssContent -replace '/\*[\s\S]*?\*/', ''
+            # Remove extra whitespace
+            $cssContent = $cssContent -replace '\s+', ' ' -replace '\s*([{}:;,])\s*', '$1'
+            
+            $cssFileName = Split-Path $cssFile -Leaf
+            $cssLink = "<link rel=`"stylesheet`" href=`"css/$cssFileName`">"
+            
+            if ($html -match [regex]::Escape($cssLink)) {
+                $inlineStyle = "<style>$cssContent</style>"
+                $html = $html -replace [regex]::Escape($cssLink), $inlineStyle
+            }
         }
     }
 

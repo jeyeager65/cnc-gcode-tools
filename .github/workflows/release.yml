@@ -44,17 +44,22 @@ jobs:
           STANDALONE_GZ_SIZE=$(stat -c%s dist/standalone.html.gz | numfmt --to=iec-i --suffix=B)
           FLUIDNC_SIZE=$(stat -c%s dist/gcodeviewer.html | numfmt --to=iec-i --suffix=B)
           FLUIDNC_GZ_SIZE=$(stat -c%s dist/gcodeviewer.html.gz | numfmt --to=iec-i --suffix=B)
+          FONTCREATOR_SIZE=$(stat -c%s dist/fontcreator.html | numfmt --to=iec-i --suffix=B)
+          FONTCREATOR_GZ_SIZE=$(stat -c%s dist/fontcreator.html.gz | numfmt --to=iec-i --suffix=B)
           
           echo "SOURCE_SIZE=${SOURCE_SIZE}" >> $GITHUB_OUTPUT
           echo "STANDALONE_SIZE=${STANDALONE_SIZE}" >> $GITHUB_OUTPUT
           echo "STANDALONE_GZ_SIZE=${STANDALONE_GZ_SIZE}" >> $GITHUB_OUTPUT
           echo "FLUIDNC_SIZE=${FLUIDNC_SIZE}" >> $GITHUB_OUTPUT
           echo "FLUIDNC_GZ_SIZE=${FLUIDNC_GZ_SIZE}" >> $GITHUB_OUTPUT
+          echo "FONTCREATOR_SIZE=${FONTCREATOR_SIZE}" >> $GITHUB_OUTPUT
+          echo "FONTCREATOR_GZ_SIZE=${FONTCREATOR_GZ_SIZE}" >> $GITHUB_OUTPUT
           
           echo "File Sizes:"
           echo "  Source: ${SOURCE_SIZE}"
           echo "  Standalone: ${STANDALONE_SIZE} (${STANDALONE_GZ_SIZE} gzipped)"
           echo "  FluidNC: ${FLUIDNC_SIZE} (${FLUIDNC_GZ_SIZE} gzipped)"
+          echo "  Font Creator: ${FONTCREATOR_SIZE} (${FONTCREATOR_GZ_SIZE} gzipped)"
       
       - name: Generate changelog
         id: changelog
@@ -116,6 +121,8 @@ jobs:
             dist/standalone.html.gz
             dist/gcodeviewer.html
             dist/gcodeviewer.html.gz
+            dist/fontcreator.html
+            dist/fontcreator.html.gz
             dist/CHANGELOG.md
           body: |
             # CNC GCode Viewer ${{ steps.version.outputs.VERSION }}
@@ -126,6 +133,7 @@ jobs:
             - **Source**: ${{ steps.sizes.outputs.SOURCE_SIZE }}
             - **Standalone**: ${{ steps.sizes.outputs.STANDALONE_SIZE }} (${{ steps.sizes.outputs.STANDALONE_GZ_SIZE }} gzipped)
             - **FluidNC**: ${{ steps.sizes.outputs.FLUIDNC_SIZE }} (${{ steps.sizes.outputs.FLUIDNC_GZ_SIZE }} gzipped)
+            - **Font Creator**: ${{ steps.sizes.outputs.FONTCREATOR_SIZE }} (${{ steps.sizes.outputs.FONTCREATOR_GZ_SIZE }} gzipped)
             
             ## Deployment Instructions
 
