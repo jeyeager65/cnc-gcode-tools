@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>GCode Font Creator</title>
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/font-creator.css">
+</head>
+<body>
+    <header>
+        <h1>✍️ GCode Font Creator</h1>
+        <div class="header-controls">
+            <button id="theme-toggle" style="padding: 8px 16px;">🌓 Theme</button>
+        </div>
+    </header>
+
+    <div class="tab-nav">
+        <button class="tab-button active" data-tab="font-creator">✏️ Font Creator</button>
+        <button class="tab-button" data-tab="text-to-gcode">📝 Text To GCode</button>
+        <button class="tab-button" data-tab="gcode-preview">🎬 GCode Preview</button>
+    </div>
+
+    <!-- Font Creator Tab -->
+    <div class="tab-content active" id="font-creator">
+        <div class="font-toolbar" style="display: flex; gap: 10px; padding: 6px 15px; background-color: var(--panel-bg); border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); align-items: center; flex-wrap: wrap;">
+            <label style="font-weight: 500;">Font:</label>
+            <select id="font-selector-editor" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color); width: 250px; margin-top: 0px;">
+                <option value="">Select a font...</option>
+            </select>
+            <button id="new-font" style="padding: 8px 16px; white-space: nowrap;">✨ New</button>
+            <button id="save-font" class="primary" style="padding: 8px 16px; white-space: nowrap;">💾 Save</button>
+            <button id="preview-font" style="padding: 8px 16px; white-space: nowrap;">👁️ Preview</button>
+            <button id="delete-font" style="padding: 8px 16px; white-space: nowrap; color: #d32f2f;">🗑️ Delete</button>
+            <button id="import-font-btn" style="padding: 8px 16px; white-space: nowrap;">📥 Import</button>
+            <button id="export-font" style="padding: 8px 16px; white-space: nowrap;">📤 Export</button>
+            <input type="file" id="import-font" accept=".json" style="display: none;" />
+        </div>
+        <div class="main-container">
+            <aside class="left-panel">
+                <div class="section">
+                    <h3 class="collapsible-header collapsed" id="font-settings-header">Font Settings <span class="collapse-icon">▼</span></h3>
+                    <div class="collapsible-content collapsed" id="font-settings-content">
+                    <div class="input-group">
+                        <label>Font Name</label>
+                        <input type="text" id="font-name" value="Custom Font" />
+                    </div>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            Simplification Tolerance
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Maximum distance (in pixels) a point can be from the simplified line. Lower values keep more detail, higher values create smoother curves with fewer points.</span>
+                        </label>
+                        <input type="number" id="simplify-tolerance" value="2" step="0.5" min="0.5" />
+                    </div>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            Arc Tolerance (mm)
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Maximum deviation (in mm) allowed when converting curves to G-code arcs. Smaller values create more accurate arcs but may generate more arc commands.</span>
+                        </label>
+                        <input type="number" id="arc-tolerance" value="0.1" step="0.01" min="0.01" />
+                    </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3 class="collapsible-header collapsed" id="char-set-header">Character Set <span class="collapse-icon">▼</span></h3>
+                    <div id="char-grid" class="char-grid collapsible-content collapsed"></div>
+                </div>
+
+                <div class="section">
+                    <h3>Current Character</h3>
+                    <div id="current-char" style="font-size: 48px; text-align: center; padding: 20px;">-</div>
+                </div>
+
+                <div class="section">
+                    <h3 class="collapsible-header collapsed" id="kerning-header">Kerning Pairs <span class="collapse-icon">▼</span></h3>
+                    <div class="collapsible-content collapsed" id="kerning-content">
+                    <div class="input-group">
+                        <label>Character Pair (e.g., AV)</label>
+                        <input type="text" id="kerning-pair" maxlength="2" placeholder="AV" />
+                    </div>
+                    <div class="input-group">
+                        <label>Adjustment (mm)</label>
+                        <input type="number" id="kerning-value" value="-1" step="0.5" />
+                    </div>
+                    <button id="add-kerning" style="width: 100%; margin-bottom: 10px;">➕ Add Kerning</button>
+                    <div id="kerning-list" style="font-size: 12px; max-height: 150px; overflow-y: auto;"></div>
+                    </div>
+                </div>
+            </aside>
+
+            <div class="center-panel">
+                <div class="canvas-container">
+                    <canvas id="drawing-canvas" width="600" height="600"></canvas>
+                </div>
+
+                <div class="toolbar">
+                    <div style="margin-bottom: 10px;">
+                        <div class="status" id="status" style="margin-bottom: 5px; font-size: 16px; font-weight: 500;">Draw to create character</div>
+                        <div style="display: flex; gap: 5px;">
+                            <button id="prev-char" style="flex: 1; white-space: nowrap;">◀ Prev</button>
+                            <button id="next-char" style="flex: 1; white-space: nowrap;">Next ▶</button>
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+                        <button id="undo" style="flex: 1 1 120px; white-space: nowrap;">↶ Undo</button>
+                        <button id="redo" style="flex: 1 1 120px; white-space: nowrap;">↷ Redo</button>
+                        <button id="clear-char" style="flex: 1 1 120px; white-space: nowrap;">🗑️ Clear</button>
+                        <button id="toggle-guides" style="flex: 1 1 120px; white-space: nowrap;">📏 Guides</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Font Preview Modal -->
+    <div id="font-preview-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
+        <div style="background: var(--bg-color); border-radius: 8px; padding: 20px; max-width: 90%; max-height: 90%; overflow: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.3); display: flex; flex-direction: column;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Font Preview</h2>
+                <button id="close-preview" style="padding: 8px 16px; cursor: pointer;">✕ Close</button>
+            </div>
+            <div style="overflow: auto; flex: 1;">
+                <canvas id="preview-canvas" width="1200" height="1200" style="border: 1px solid var(--border-color); display: block;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Text To GCode Tab -->
+    <div class="tab-content" id="text-to-gcode">
+        <div class="main-container" style="justify-content: center;">
+            <div style="max-width: 800px; width: 100%; padding: 20px; overflow-y: auto;">
+                <div class="section">
+                    <h3>Font Selection</h3>
+                    <div class="input-group">
+                        <label>Font</label>
+                        <select id="font-selector" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color);">
+                            <option value="">Select a font...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Text to Engrave</h3>
+                    <div class="input-group">
+                        <label>Text</label>
+                        <textarea id="text-input" placeholder="Enter text..." style="min-height: 100px;">HELLO WORLD</textarea>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Output Settings</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div class="input-group">
+                            <label>Output Size (mm)</label>
+                            <input type="number" id="output-size" value="10" step="0.1" min="0.5" />
+                        </div>
+                        <div class="input-group">
+                            <label>Character Spacing (mm)</label>
+                            <input type="number" id="char-spacing" value="2" step="0.1" min="0" />
+                        </div>
+                        <div class="input-group">
+                            <label>Space Width (mm)</label>
+                            <input type="number" id="space-width" value="3" step="0.1" min="0" />
+                        </div>
+                        <div class="input-group">
+                            <label>Line Gap (mm)</label>
+                            <input type="number" id="line-spacing" value="2" step="0.1" min="0" />
+                        </div>
+                        <div class="input-group">
+                            <label>Max Width (mm, 0=none)</label>
+                            <input type="number" id="max-width" value="0" step="10" min="0" />
+                        </div>
+                        <div class="input-group">
+                            <label>Max Height (mm, 0=none)</label>
+                            <input type="number" id="max-height" value="0" step="10" min="0" />
+                        </div>
+                        <div class="input-group">
+                            <label>Max Text Size (mm)</label>
+                            <input type="number" id="max-text-size" value="100" step="1" min="1" />
+                        </div>
+                        <div class="input-group" style="grid-column: 1 / -1;">
+                            <label style="display: flex; align-items: center; cursor: pointer;">
+                                <input type="checkbox" id="auto-fit" style="margin-right: 8px;" />
+                                Auto-fit to Max Width/Height (scales output size to maximize within constraints)
+                            </label>
+                        </div>
+                        <div class="input-group">
+                            <label>Feed Rate (mm/min)</label>
+                            <input type="number" id="feed-rate" value="500" step="50" min="10" />
+                        </div>
+                        <div class="input-group">
+                            <label>Plunge Rate (mm/min)</label>
+                            <input type="number" id="plunge-rate" value="200" step="50" min="10" />
+                        </div>
+                        <div class="input-group">
+                            <label>Safe Z (mm)</label>
+                            <input type="number" id="safe-z" value="5" step="0.5" />
+                        </div>
+                        <div class="input-group">
+                            <label>Engrave Depth (mm)</label>
+                            <input type="number" id="engrave-depth" value="-0.1" step="0.05" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <button id="preview-gcode-btn" class="primary" style="width: 100%; font-size: 16px; padding: 12px;">🎬 Preview GCode</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- GCode Preview Tab - Full Viewer from index.html -->
+    <div class="tab-content" id="gcode-preview">
+        <div class="container" style="height: 100%;">
+            <aside class="left-sidebar" id="preview-gcode-sidebar">
+                <div class="panel" id="gcode-panel">
+                    <h3>GCode <span id="gcode-line-indicator" style="font-size: 12px; opacity: 0.7;"></span></h3>
+                    <div id="gcode-container">
+                        <div id="gcode-content">
+                            <div class="gcode-line-numbers" id="gcode-line-numbers"></div>
+                            <div class="gcode-code" id="gcode-display"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel" id="gcode-welcome" style="display: none;">
+                    <div style="margin-top: 0;">
+                        <h3>GCode Preview</h3>
+                        <p style="font-size: 14px; line-height: 1.6; opacity: 0.9;">
+                            Click "Preview GCode" in the "Text To GCode" tab to generate and visualize your toolpath here.
+                        </p>
+                        <p style="font-size: 14px; line-height: 1.6; opacity: 0.9; margin-top: 10px;">
+                            This viewer uses the same rendering engine as the standalone GCode viewer, supporting 2D/3D views, animation, and all advanced features.
+                        </p>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <h3>Navigation</h3>
+                        <ul style="font-size: 14px; line-height: 1.8; list-style: circle; padding-left: 20px; opacity: 0.9;">
+                            <li><strong>2D View:</strong> Left or right click drag to pan, scroll to zoom</li>
+                            <li><strong>3D View:</strong> Left click and drag to rotate, right click and drag to pan, scroll to zoom</li>
+                            <li><strong>Mobile:</strong> One finger drag to rotate, two finger drag to pan, pinch to zoom</li>
+                            <li><strong>Reset:</strong> Click "Reset View" to re-center</li>
+                        </ul>
+                    </div>
+                </div>
+            </aside>
+
+            <div class="canvas-container">
+                <div class="canvas-overlay-controls">
+                    <button id="btn-toggle-view">3D View</button>
+                    <button id="btn-reset-view" disabled>Reset View</button>
+                </div>
+                <canvas id="canvas2d"></canvas>
+                <canvas id="canvas3d" class="hidden"></canvas>
+                <canvas id="canvas3d-overlay" class="hidden"></canvas>
+            </div>
+
+            <aside class="sidebar" id="preview-sidebar">
+                <div class="panel">
+                    <h3>Export</h3>
+                    <button id="download-gcode" style="width: 100%; font-size: 14px; padding: 10px; margin-bottom: 8px;">💾 Download GCode</button>
+                    <button id="export-image" style="width: 100%; font-size: 14px; padding: 10px;">🖼️ Export Image</button>
+                </div>
+
+                <div class="panel">
+                    <h3>Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Segments</div>
+                            <div class="stat-value" id="stat-lines">-</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Est. Time</div>
+                            <div class="stat-value" id="stat-time">-</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">X Range</div>
+                            <div class="stat-value" id="stat-x">-</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Y Range</div>
+                            <div class="stat-value" id="stat-y">-</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Z Range</div>
+                            <div class="stat-value" id="stat-z">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel" id="tool-panel" style="display: none;">
+                    <h3>Tools</h3>
+                    <div id="tool-list" style="max-height: 300px; overflow-y: auto;"></div>
+                </div>
+
+                <div class="panel" id="rapid-moves-panel" style="display: none;">
+                    <h3>Rapid Moves (G0)</h3>
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--canvas-bg); border-radius: 4px;">
+                        <input type="checkbox" id="rapid-moves-visible" checked>
+                        <input type="color" id="rapid-move-color" value="#999999" style="width: 32px; height: 24px; border: none; cursor: pointer;">
+                        <label for="rapid-moves-visible" style="flex: 1; font-size: 13px; cursor: pointer;">Show Travel Moves</label>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>View Controls</h3>
+                    <div class="layer-controls">
+                        <div style="margin-bottom: 10px;">
+                            <label style="font-size: 12px; display: block; margin-bottom: 5px;">Zoom</label>
+                            <input type="range" id="zoom-slider" min="0.1" max="10" step="0.1" value="1" style="width: 100%;">
+                            <div style="text-align: center; font-size: 11px; margin-top: 5px;">
+                                <span id="zoom-value">100%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel" id="animation-panel" style="display: none;">
+                    <h3>Animation</h3>
+                    <div class="animation-controls">
+                        <div class="controls-row">
+                            <button id="btn-play">Play</button>
+                            <button id="btn-reset">Reset</button>
+                        </div>
+                        <div class="controls-row">
+                            <button id="btn-prev">◀ Prev</button>
+                            <button id="btn-next">Next ▶</button>
+                        </div>
+                        <div>
+                            <label>Speed: <span id="speed-label">1x</span></label>
+                            <input type="range" id="speed-slider" min="-10" max="10" value="0" step="1">
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <label style="font-size: 12px; display: block; margin-bottom: 5px;">Segment: <span id="current-line">0</span> / <span id="total-lines">0</span></label>
+                            <div style="font-size: 11px; opacity: 0.7; margin-bottom: 5px;">File Line: <span id="current-file-line">-</span></div>
+                            <input type="range" id="line-slider" min="0" max="0" step="1" value="0" style="width: 100%;">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>Layer Filter</h3>
+                    <div class="layer-controls">
+                        <div class="layer-inputs">
+                            <div>
+                                <label style="font-size: 12px;">Min Z</label>
+                                <input type="number" id="layer-min" step="0.1" placeholder="Auto">
+                            </div>
+                            <div>
+                                <label style="font-size: 12px;">Max Z</label>
+                                <input type="number" id="layer-max" step="0.1" placeholder="Auto">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>3D Grid</h3>
+                    <div class="layer-controls">
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" id="grid-enabled" checked>
+                                <span>Show Grid</span>
+                            </label>
+                        </div>
+                        <div class="layer-inputs">
+                            <div>
+                                <label style="font-size: 12px;">Width (X)</label>
+                                <input type="number" id="grid-width" step="10" value="200" min="0">
+                            </div>
+                            <div>
+                                <label style="font-size: 12px;">Height (Y)</label>
+                                <input type="number" id="grid-height" step="10" value="200" min="0">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="privacy-notice">
+                    🔒 All processing happens locally in your browser.<br>No data is transmitted.
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script src="js/parser.js"></script>
+    <script src="js/camera.js"></script>
+    <script src="js/renderer2d.js"></script>
+    <script src="js/renderer3d.js"></script>
+    <script src="js/animator.js"></script>
+    <script src="js/controller.js"></script>
+    <script src="js/font-creator-controller.js"></script>
+    <script src="js/font-creator-app.js"></script>
+</body>
+</html>
