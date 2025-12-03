@@ -411,11 +411,11 @@ class FluidNCAPI {
                     url: downloadPath
                 });
                 
-                // Timeout after 30 seconds (large files)
+                // Timeout after 60 seconds (large files)
                 setTimeout(() => {
                     window.removeEventListener('message', downloadHandler);
                     reject(new Error('Download timeout'));
-                }, 30000);
+                }, 60000);
             });
         } catch (error) {
             console.error('[FluidNC API] Failed to read SD file:', error);

@@ -171,21 +171,30 @@ class Controller {
             });
         });
         
-        // Handle window resize to show all content on desktop
+        // Handle window resize (throttled)
+        let resizeTimeout;
         window.addEventListener('resize', () => {
-            if (window.innerWidth > 968) {
-                // Show all content on desktop
-                document.querySelectorAll('.mobile-tab-content').forEach(content => {
-                    content.classList.add('active');
-                });
-            } else {
-                // On mobile, ensure only the currently selected tab is active
-                const activeTab = document.querySelector('.mobile-tab-button.active');
-                if (activeTab) {
-                    const tabName = activeTab.getAttribute('data-tab');
-                    this.switchMobileTab(tabName);
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                // Resize canvases
+                this.renderer2d.resizeCanvas();
+                this.renderer3d.resizeCanvas();
+                
+                // Handle mobile/desktop layout
+                if (window.innerWidth > 968) {
+                    // Show all content on desktop
+                    document.querySelectorAll('.mobile-tab-content').forEach(content => {
+                        content.classList.add('active');
+                    });
+                } else {
+                    // On mobile, ensure only the currently selected tab is active
+                    const activeTab = document.querySelector('.mobile-tab-button.active');
+                    if (activeTab) {
+                        const tabName = activeTab.getAttribute('data-tab');
+                        this.switchMobileTab(tabName);
+                    }
                 }
-            }
+            }, 100);
         });
         
         // File upload (only if elements exist - not in FluidNC version)
@@ -221,70 +230,104 @@ class Controller {
         }
         
         // View toggle
-        document.getElementById('btn-toggle-view').addEventListener('click', () => {
-            this.toggleView();
-        });
+        const btnToggleView = document.getElementById('btn-toggle-view');
+        if (btnToggleView) {
+            btnToggleView.addEventListener('click', () => {
+                this.toggleView();
+            });
+        }
         
         // Reset view button
-        document.getElementById('btn-reset-view').addEventListener('click', () => {
-            if (this.segments.length > 0) {
-                this.camera.fitToBounds(this.bounds, 0.1, this.canvas2d.width, this.canvas2d.height);
-                this.updateZoomSlider();
-            }
-        });
+        const btnResetView = document.getElementById('btn-reset-view');
+        if (btnResetView) {
+            btnResetView.addEventListener('click', () => {
+                if (this.segments.length > 0) {
+                    this.camera.fitToBounds(this.bounds, 0.1, this.canvas2d.width, this.canvas2d.height);
+                    this.updateZoomSlider();
+                }
+            });
+        }
         
         // Animation controls
-        document.getElementById('btn-play').addEventListener('click', () => {
-            this.togglePlayback();
-        });
+        const btnPlay = document.getElementById('btn-play');
+        if (btnPlay) {
+            btnPlay.addEventListener('click', () => {
+                this.togglePlayback();
+            });
+        }
         
-        document.getElementById('btn-reset').addEventListener('click', () => {
-            this.animator.reset();
-        });
+        const btnReset = document.getElementById('btn-reset');
+        if (btnReset) {
+            btnReset.addEventListener('click', () => {
+                this.animator.reset();
+            });
+        }
         
-        document.getElementById('btn-next').addEventListener('click', () => {
-            this.animator.stepNext();
-        });
+        const btnNext = document.getElementById('btn-next');
+        if (btnNext) {
+            btnNext.addEventListener('click', () => {
+                this.animator.stepNext();
+            });
+        }
         
-        document.getElementById('btn-prev').addEventListener('click', () => {
-            this.animator.stepPrev();
-        });
+        const btnPrev = document.getElementById('btn-prev');
+        if (btnPrev) {
+            btnPrev.addEventListener('click', () => {
+                this.animator.stepPrev();
+            });
+        }
         
-        document.getElementById('speed-slider').addEventListener('input', (e) => {
-            const speed = Animator.sliderToSpeed(parseFloat(e.target.value));
-            this.animator.setSpeed(speed);
-            document.getElementById('speed-label').textContent = speed.toFixed(1) + 'x';
-        });
+        const speedSlider = document.getElementById('speed-slider');
+        const speedLabel = document.getElementById('speed-label');
+        if (speedSlider && speedLabel) {
+            speedSlider.addEventListener('input', (e) => {
+                const speed = Animator.sliderToSpeed(parseFloat(e.target.value));
+                this.animator.setSpeed(speed);
+                speedLabel.textContent = speed.toFixed(1) + 'x';
+            });
+        }
         
         // Line slider
-        document.getElementById('line-slider').addEventListener('input', (e) => {
-            const lineNum = parseInt(e.target.value);
-            this.animator.setCurrentLine(lineNum);
-        });
+        const lineSlider = document.getElementById('line-slider');
+        if (lineSlider) {
+            lineSlider.addEventListener('input', (e) => {
+                const lineNum = parseInt(e.target.value);
+                this.animator.setCurrentLine(lineNum);
+            });
+        }
         
         // Layer filter
-        document.getElementById('layer-min').addEventListener('input', () => {
-            this.updateLayerFilter();
-        });
-        
-        document.getElementById('layer-max').addEventListener('input', () => {
-            this.updateLayerFilter();
-        });
+        const layerMin = document.getElementById('layer-min');
+        const layerMax = document.getElementById('layer-max');
+        if (layerMin) {
+            layerMin.addEventListener('input', () => {
+                this.updateLayerFilter();
+            });
+        }
+        if (layerMax) {
+            layerMax.addEventListener('input', () => {
+                this.updateLayerFilter();
+            });
+        }
         
         // Zoom slider
-        document.getElementById('zoom-slider').addEventListener('input', (e) => {
-            const relativeZoom = parseFloat(e.target.value);
-            // Convert relative zoom to absolute zoom
-            if (this.currentView === '2d') {
-                const absoluteZoom = relativeZoom * this.camera.initialZoom2d;
-                this.setZoom(absoluteZoom);
-            } else {
-                const absoluteScale = this.camera.initialOrthoScale / relativeZoom;
-                this.camera.orthoScale = absoluteScale;
-                this.render();
-            }
-            document.getElementById('zoom-value').textContent = Math.round(relativeZoom * 100) + '%';
-        });
+        const zoomSlider = document.getElementById('zoom-slider');
+        const zoomValue = document.getElementById('zoom-value');
+        if (zoomSlider && zoomValue) {
+            zoomSlider.addEventListener('input', (e) => {
+                const relativeZoom = parseFloat(e.target.value);
+                // Convert relative zoom to absolute zoom
+                if (this.currentView === '2d') {
+                    const absoluteZoom = relativeZoom * this.camera.initialZoom2d;
+                    this.setZoom(absoluteZoom);
+                } else {
+                    const absoluteScale = this.camera.initialOrthoScale / relativeZoom;
+                    this.camera.orthoScale = absoluteScale;
+                    this.render();
+                }
+                zoomValue.textContent = Math.round(relativeZoom * 100) + '%';
+            });
+        }
         
         // Theme toggle buttons
         const themeLightBtn = document.getElementById('theme-light');
@@ -309,17 +352,26 @@ class Controller {
         }
         
         // Grid controls (no action needed - renderer checks these values each frame)
-        document.getElementById('grid-enabled').addEventListener('change', () => {
-            // Render loop will automatically pick up the change
-        });
+        const gridEnabled = document.getElementById('grid-enabled');
+        if (gridEnabled) {
+            gridEnabled.addEventListener('change', () => {
+                // Render loop will automatically pick up the change
+            });
+        }
         
-        document.getElementById('grid-width').addEventListener('input', () => {
-            // Render loop will automatically pick up the change
-        });
+        const gridWidth = document.getElementById('grid-width');
+        if (gridWidth) {
+            gridWidth.addEventListener('input', () => {
+                // Render loop will automatically pick up the change
+            });
+        }
         
-        document.getElementById('grid-height').addEventListener('input', () => {
-            // Render loop will automatically pick up the change
-        });
+        const gridHeight = document.getElementById('grid-height');
+        if (gridHeight) {
+            gridHeight.addEventListener('input', () => {
+                // Render loop will automatically pick up the change
+            });
+        }
         
         // Rapid moves (G0) controls
         const rapidVisibleCheckbox = document.getElementById('rapid-moves-visible');
@@ -349,12 +401,6 @@ class Controller {
         
         window.addEventListener('keyup', (e) => {
             if (e.key === 'Shift') this.isShiftPressed = false;
-        });
-        
-        // Window resize
-        window.addEventListener('resize', () => {
-            this.renderer2d.resizeCanvas();
-            this.renderer3d.resizeCanvas();
         });
     }
 
@@ -441,7 +487,7 @@ class Controller {
             canvas.addEventListener('mousemove', onMouseMove);
             canvas.addEventListener('mouseup', onMouseUp);
             canvas.addEventListener('mouseleave', onMouseUp);
-            canvas.addEventListener('wheel', onWheel);
+            canvas.addEventListener('wheel', onWheel, { passive: false });
             canvas.addEventListener('dblclick', onDoubleClick);
             canvas.addEventListener('contextmenu', onContextMenu);
         });
@@ -525,9 +571,9 @@ class Controller {
         };
         
         [canvas2d, canvas3d].forEach(canvas => {
-            canvas.addEventListener('touchstart', onTouchStart);
-            canvas.addEventListener('touchmove', onTouchMove);
-            canvas.addEventListener('touchend', onTouchEnd);
+            canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+            canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+            canvas.addEventListener('touchend', onTouchEnd, { passive: false });
         });
     }
 
@@ -649,6 +695,116 @@ class Controller {
             progressBar.classList.add('hidden');
         }
     }
+
+    /**
+     * Load GCode from a string (for generated GCode, no file upload)
+     * @param {string} gcodeText - The GCode text to parse and display
+     * @param {string} idPrefix - Optional prefix for element IDs (e.g., 'preview-')
+     */
+    async loadGCodeFromString(gcodeText, idPrefix = '') {
+        const progressBar = document.getElementById(`${idPrefix}progress-bar`);
+        const progressFill = document.getElementById(`${idPrefix}progress-fill`);
+        
+        // Debug: Check if string is corrupted on entry
+        const problemLines = gcodeText.split('\n').filter(line => /Y\d{5,}/.test(line));
+        if (problemLines.length > 0) {
+            console.error(`CONTROLLER ERROR: String has ${problemLines.length} bad lines:`, problemLines.slice(0, 2));
+        } else {
+            console.log('✓ Controller OK: String is clean in loadGCodeFromString');
+        }
+        
+        if (progressBar) {
+            progressBar.classList.remove('hidden');
+            progressFill.style.width = '0%';
+        }
+        
+        try {
+            this.gcodeText = gcodeText;
+            
+            // Parse string directly instead of going through Blob/File/FileReader
+            // to avoid chunking corruption issues
+            const segments = await this.parser.parseString(gcodeText, (percent) => {
+                if (progressFill) progressFill.style.width = percent + '%';
+            });
+            
+            this.segments = segments;
+            this.bounds = this.parser.getBounds();
+            
+            // Detect tools used in the file
+            this.detectTools(segments);
+            
+            // Update renderers
+            this.renderer2d.setSegments(segments, this.bounds);
+            this.renderer3d.setSegments(segments, this.bounds);
+            
+            // Update renderers with tool states (colors and visibility)
+            this.updateRenderers();
+            
+            // Update animator
+            this.animator.setSegments(segments);
+            
+            // Fit camera to bounds
+            this.camera.fitToBounds(this.bounds, 0.1, this.canvas2d.width, this.canvas2d.height);
+            
+            // Update UI
+            this.updateStatistics(idPrefix);
+            this.displayGCode(gcodeText, idPrefix);
+            this.updateToolPanel(idPrefix);
+            
+            const gcodePanel = document.getElementById(`${idPrefix}gcode-panel`);
+            if (gcodePanel) {
+                gcodePanel.style.visibility = 'visible';
+                gcodePanel.style.position = 'static';
+            }
+            
+            const animationPanel = document.getElementById(`${idPrefix}animation-panel`);
+            if (animationPanel) animationPanel.style.display = 'block';
+            
+            const toolPanel = document.getElementById(`${idPrefix}tool-panel`);
+            if (toolPanel) toolPanel.style.display = 'block';
+            
+            const rapidMovesPanel = document.getElementById(`${idPrefix}rapid-moves-panel`);
+            if (rapidMovesPanel) rapidMovesPanel.style.display = 'block';
+            
+            const resetBtn = document.getElementById(`${idPrefix}btn-reset-view`);
+            if (resetBtn) resetBtn.disabled = false;
+            
+            // Show GCode sidebar and hide welcome panel
+            const leftSidebar = document.querySelector(idPrefix ? `.${idPrefix}left-sidebar` : '.left-sidebar');
+            if (leftSidebar) leftSidebar.classList.remove('gcode-hidden');
+            
+            const welcomePanel = document.getElementById(`${idPrefix}gcode-welcome`);
+            if (welcomePanel) welcomePanel.style.display = 'none';
+            
+            // Setup line slider
+            const lineSlider = document.getElementById(`${idPrefix}line-slider`);
+            if (lineSlider) {
+                lineSlider.max = segments.length;
+                lineSlider.value = 0;
+            }
+            
+            const totalLinesSpan = document.getElementById(`${idPrefix}total-lines`);
+            if (totalLinesSpan) totalLinesSpan.textContent = segments.length;
+            
+            // Render initial view
+            if (this.is3DView) {
+                this.renderer3d.render();
+            } else {
+                this.renderer2d.render();
+            }
+            
+            if (progressBar) {
+                setTimeout(() => {
+                    progressBar.classList.add('hidden');
+                }, 500);
+            }
+            
+        } catch (error) {
+            console.error('Error loading GCode:', error);
+            alert('Error parsing GCode. Please check the console for details.');
+            if (progressBar) progressBar.classList.add('hidden');
+        }
+    }
     
     /**
      * Detect tools used in segments
@@ -687,8 +843,10 @@ class Controller {
     /**
      * Update tool panel UI
      */
-    updateToolPanel() {
-        const toolList = document.getElementById('tool-list');
+    updateToolPanel(idPrefix = '') {
+        const toolList = document.getElementById(`${idPrefix}tool-list`);
+        if (!toolList) return;
+        
         toolList.innerHTML = '';
         
         if (this.tools.size === 0) {
@@ -747,38 +905,52 @@ class Controller {
     /**
      * Update statistics panel
      */
-    updateStatistics() {
-        document.getElementById('stat-lines').textContent = this.segments.length;
-        document.getElementById('stat-time').textContent = this.animator.getFormattedTime();
+    updateStatistics(idPrefix = '') {
+        const statLines = document.getElementById(`${idPrefix}stat-lines`);
+        const statTime = document.getElementById(`${idPrefix}stat-time`);
+        const statX = document.getElementById(`${idPrefix}stat-x`);
+        const statY = document.getElementById(`${idPrefix}stat-y`);
+        const statZ = document.getElementById(`${idPrefix}stat-z`);
+        const totalLines = document.getElementById(`${idPrefix}total-lines`);
+        const currentLine = document.getElementById(`${idPrefix}current-line`);
+        const layerMin = document.getElementById(`${idPrefix}layer-min`);
+        const layerMax = document.getElementById(`${idPrefix}layer-max`);
         
-        document.getElementById('stat-x').textContent = 
+        if (statLines) statLines.textContent = this.segments.length;
+        if (statTime) statTime.textContent = this.animator.getFormattedTime();
+        
+        if (statX) statX.textContent = 
             `${this.bounds.minX.toFixed(1)} to ${this.bounds.maxX.toFixed(1)}`;
-        document.getElementById('stat-y').textContent = 
+        if (statY) statY.textContent = 
             `${this.bounds.minY.toFixed(1)} to ${this.bounds.maxY.toFixed(1)}`;
-        document.getElementById('stat-z').textContent = 
+        if (statZ) statZ.textContent = 
             `${this.bounds.minZ.toFixed(1)} to ${this.bounds.maxZ.toFixed(1)}`;
         
-        document.getElementById('total-lines').textContent = this.segments.length;
-        document.getElementById('current-line').textContent = '0';
+        if (totalLines) totalLines.textContent = this.segments.length;
+        if (currentLine) currentLine.textContent = '0';
         
         // Set layer filter defaults
-        document.getElementById('layer-min').placeholder = this.bounds.minZ.toFixed(1);
-        document.getElementById('layer-max').placeholder = this.bounds.maxZ.toFixed(1);
+        if (layerMin) layerMin.placeholder = this.bounds.minZ.toFixed(1);
+        if (layerMax) layerMax.placeholder = this.bounds.maxZ.toFixed(1);
     }
 
     /**
      * Update coordinate display
      */
     updateCoordinateDisplay(x, y, z) {
-        document.getElementById('coordinates').textContent = 
-            `X: ${x.toFixed(2)} Y: ${y.toFixed(2)} Z: ${z.toFixed(2)}`;
+        const coordsElement = document.getElementById('coordinates');
+        if (coordsElement) {
+            coordsElement.textContent = `X: ${x.toFixed(2)} Y: ${y.toFixed(2)} Z: ${z.toFixed(2)}`;
+        }
     }
 
     /**
      * Display GCode text with virtual scrolling for large files
      */
-    displayGCode(text) {
-        const container = document.getElementById('gcode-container');
+    displayGCode(text, idPrefix = '') {
+        const container = document.getElementById(`${idPrefix}gcode-container`);
+        if (!container) return;
+        
         const lines = text.split('\n');
         const totalLines = lines.length;
         
@@ -787,24 +959,26 @@ class Controller {
         this.gcodeLineHeight = 17;
         this.gcodeCurrentHighlight = null;
         
-        document.getElementById('gcode-line-indicator').textContent = 
-            `(${totalLines} lines)`;
+        const lineIndicator = document.getElementById(`${idPrefix}gcode-line-indicator`);
+        if (lineIndicator) {
+            lineIndicator.textContent = `(${totalLines} lines)`;
+        }
         
         // Create structure with proper scrollable height (add extra lines for buffer)
         container.innerHTML = `
             <div style="min-height: ${(totalLines + 10) * this.gcodeLineHeight}px; position: relative; width: max-content; min-width: 100%;">
-                <div id="gcode-viewport" style="position: absolute; top: 0; left: 0; will-change: transform;">
+                <div id="${idPrefix}gcode-viewport" style="position: absolute; top: 0; left: 0; will-change: transform;">
                     <div style="display: flex;">
-                        <div class="gcode-line-numbers" id="gcode-line-numbers"></div>
-                        <div class="gcode-code" id="gcode-display"></div>
+                        <div class="gcode-line-numbers" id="${idPrefix}gcode-line-numbers"></div>
+                        <div class="gcode-code" id="${idPrefix}gcode-display"></div>
                     </div>
                 </div>
             </div>
         `;
         
-        const viewport = document.getElementById('gcode-viewport');
-        const displayDiv = document.getElementById('gcode-display');
-        const lineNumbersDiv = document.getElementById('gcode-line-numbers');
+        const viewport = document.getElementById(`${idPrefix}gcode-viewport`);
+        const displayDiv = document.getElementById(`${idPrefix}gcode-display`);
+        const lineNumbersDiv = document.getElementById(`${idPrefix}gcode-line-numbers`);
         
         let lastStartLine = -1;
         
@@ -1116,7 +1290,10 @@ class Controller {
     }
 }
 
-// Initialize on page load
+// Initialize on page load (only for standalone viewer, not font-creator)
 window.addEventListener('DOMContentLoaded', () => {
-    new Controller();
+    // Check if this is the font-creator page by looking for the text-to-gcode tab
+    if (!document.getElementById('text-to-gcode')) {
+        new Controller();
+    }
 });

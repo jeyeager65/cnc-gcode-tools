@@ -37,45 +37,44 @@ class GCodeParser {
      * @param {Function} onProgress - Callback (percent)
      * @returns {Promise<Array>} Array of segments
      */
-    async parseFile(file, onProgress) {
+    async parseString(gcodeString, onProgress) {
         this.reset();
         
-        const chunkSize = 50 * 1024; // 50KB chunks
-        const totalSize = file.size;
-        let offset = 0;
-        let buffer = '';
-        let lineNum = 0;
-
-        while (offset < totalSize) {
-            const chunk = await this.readChunk(file, offset, chunkSize);
-            offset += chunk.length;
+        const lines = gcodeString.split('\n');
+        const totalLines = lines.length;
+        
+        for (let i = 0; i < totalLines; i++) {
+            this.parseLine(lines[i].trim(), i + 1);
             
-            // Add chunk to buffer and process complete lines
-            buffer += chunk;
-            const lines = buffer.split('\n');
-            
-            // Keep last incomplete line in buffer
-            buffer = lines.pop();
-            
-            // Process complete lines
-            for (const line of lines) {
-                lineNum++;
-                this.parseLine(line.trim(), lineNum);
-            }
-            
-            // Report progress
-            if (onProgress) {
-                onProgress(Math.min(100, (offset / totalSize) * 100));
+            // Report progress periodically
+            if (onProgress && i % 1000 === 0) {
+                onProgress(Math.min(100, ((i + 1) / totalLines) * 100));
             }
         }
         
-        // Process remaining buffer
-        if (buffer.trim()) {
-            lineNum++;
-            this.parseLine(buffer.trim(), lineNum);
+        // Final progress update
+        if (onProgress) {
+            onProgress(100);
         }
         
         return this.segments;
+    }
+
+    /**
+     * Parse GCode file
+     * @param {File} file - File object to parse
+     * @param {Function} onProgress - Progress callback
+     * @returns {Promise<Array>} Array of segments
+     */
+    async parseFile(file, onProgress) {
+        this.reset();
+        
+        // Read entire file as text to avoid chunking issues
+        // Modern browsers can handle files up to 10MB+ easily
+        const text = await file.text();
+        
+        // Use the string parser which is more reliable
+        return this.parseString(text, onProgress);
     }
 
     /**
@@ -445,6 +444,12 @@ class GCodeParser {
      * Update bounding box
      */
     updateBounds(point) {
+        // Check for invalid coordinates
+        if (isNaN(point.x) || isNaN(point.y) || isNaN(point.z)) {
+            console.error('Invalid point in updateBounds:', point);
+            return;
+        }
+        
         this.bounds.minX = Math.min(this.bounds.minX, point.x);
         this.bounds.maxX = Math.max(this.bounds.maxX, point.x);
         this.bounds.minY = Math.min(this.bounds.minY, point.y);

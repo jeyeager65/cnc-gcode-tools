@@ -72,6 +72,11 @@ class Animator {
     play() {
         if (this.segments.length === 0) return;
         
+        // Sync accumulated time with current index to resume from current position
+        if (this.estimatedTotalTime > 0) {
+            this.accumulatedTime = (this.currentIndex / this.segments.length) * this.estimatedTotalTime;
+        }
+        
         this.isPlaying = true;
         this.lastTime = performance.now();
         this.animate();

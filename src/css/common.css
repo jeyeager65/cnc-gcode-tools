@@ -395,6 +395,24 @@ input[type="range"] {
     border-radius: 2px;
     overflow: hidden;
     margin-top: 10px;
+    position: relative;
+}
+
+.progress-bar.indeterminate .progress-fill {
+    width: 30% !important;
+    animation: indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+    0% {
+        transform: translateX(-100%);
+    }
+    50% {
+        transform: translateX(350%);
+    }
+    100% {
+        transform: translateX(-100%);
+    }
 }
 
 .progress-fill {
@@ -481,6 +499,7 @@ footer {
     background-color: var(--panel-bg);
     border-bottom: 1px solid var(--border-color);
     overflow-x: auto;
+    overflow-y: hidden;
 }
 
 .mobile-tabs-nav {
@@ -697,6 +716,73 @@ footer {
     
     .panel h3 {
         font-size: 0.9rem;
+    }
+    
+    /* Reduce tab button height on mobile */
+    .mobile-tab-button {
+        padding: 0px 12px;
+    }
+    
+    /* Minimize margins and padding on Settings and GCode tabs for mobile */
+    #settings-tab .panel,
+    #gcode-tab .panel,
+    #gcode-panel {
+        padding: 6px;
+        margin-bottom: 6px;
+    }
+    
+    #settings-tab .panel h3,
+    #gcode-tab .panel h3,
+    #gcode-panel h3 {
+        margin-bottom: 4px;
+    }
+    
+    #settings-tab .control-group,
+    #gcode-tab .control-group {
+        margin-bottom: 6px;
+    }
+    
+    #settings-tab .slider-container,
+    #gcode-tab .slider-container {
+        margin: 4px 0;
+    }
+    
+    #settings-tab label,
+    #gcode-tab label {
+        margin-bottom: 2px;
+    }
+    
+    #settings-tab input,
+    #settings-tab select,
+    #settings-tab button,
+    #gcode-tab input,
+    #gcode-tab select,
+    #gcode-tab button {
+        padding: 6px 8px;
+    }
+    
+    /* Remove horizontal padding from container on mobile */
+    .container {
+        padding: 0 !important;
+    }
+    
+    header {
+        padding: 0 4px;
+    }
+    
+    /* Reduce sidebar padding */
+    .sidebar {
+        padding: 2px;
+    }
+    
+    /* Minimize all margins on gcode-panel */
+    #gcode-panel {
+        margin: 6px;
+        padding: 4px;
+    }
+    
+    #gcode-panel h3 {
+        margin: 4px 0;
     }
 }
 

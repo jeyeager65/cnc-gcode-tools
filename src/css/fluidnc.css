@@ -1,5 +1,76 @@
 /* FluidNC-specific styles */
 
+/* Override ESP3D WebUI styles for dark mode compatibility */
+body,
+html,
+.container,
+.panel,
+.sidebar,
+.left-sidebar,
+header,
+footer,
+button,
+input,
+select,
+textarea,
+label,
+div {
+    background-color: inherit !important;
+    color: inherit !important;
+}
+
+/* Restore specific backgrounds and colors */
+body {
+    background-color: var(--bg-color) !important;
+    color: var(--text-color) !important;
+}
+
+.container {
+    background-color: var(--bg-color) !important;
+}
+
+header {
+    background-color: var(--panel-bg) !important;
+    color: var(--text-color) !important;
+}
+
+footer {
+    background-color: var(--panel-bg) !important;
+    color: var(--text-color) !important;
+}
+
+.sidebar,
+.left-sidebar {
+    background-color: var(--panel-bg) !important;
+    color: var(--text-color) !important;
+}
+
+.panel {
+    background-color: var(--bg-color) !important;
+    color: var(--text-color) !important;
+}
+
+.panel {
+    border: 1px solid var(--border-color) !important;
+}
+
+button {
+    background-color: var(--button-bg) !important;
+    color: var(--text-color) !important;
+}
+
+button:hover {
+    background-color: var(--button-hover-bg) !important;
+}
+
+input,
+select,
+textarea {
+    background-color: var(--input-bg) !important;
+    color: var(--text-color) !important;
+    border-color: var(--border-color) !important;
+}
+
 /* File Browser */
 .file-browser {
     max-height: 240px;
@@ -17,15 +88,17 @@
     align-items: center;
     gap: 10px;
     transition: background-color 0.2s;
+    background-color: var(--canvas-bg) !important;
+    color: var(--text-color) !important;
 }
 
 .file-item:hover {
-    background-color: var(--panel-bg);
+    background-color: var(--panel-bg) !important;
 }
 
 .file-item.selected {
-    background-color: var(--cut-color);
-    color: white;
+    background-color: var(--cut-color) !important;
+    color: var(--bg-color) !important;
 }
 
 .file-icon {
@@ -69,4 +142,13 @@
 
 .breadcrumb-separator {
     opacity: 0.5;
+}
+
+/* Progress Bar */
+.progress-bar {
+    background-color: var(--border-color) !important;
+}
+
+.progress-fill {
+    background-color: var(--cut-color) !important;
 }
