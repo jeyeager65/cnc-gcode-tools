@@ -440,7 +440,7 @@ class FluidNCAPI {
     /**
      * Read file from SD card
      */
-    async readSDFile(filepath) {
+    async readSDFile(filepath, onProgress = null) {
         try {
             // Ensure path starts with /sd/
             const downloadPath = filepath.startsWith('/sd/') ? filepath : `/sd${filepath}`;
@@ -452,19 +452,28 @@ class FluidNCAPI {
                 // Listen for download response
                 const downloadHandler = (eventMsg) => {
                     const { type, content } = eventMsg.data;
-                    if (type === 'download' && content && content.status === 'success' && content.initiator && content.initiator.url === downloadPath) {
-                        // Read the file content
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            resolve(reader.result);
-                        };
-                        reader.onerror = () => {
-                            reject(new Error('Failed to read file content'));
-                        };
-                        reader.readAsText(content.response);
-                        
-                        // Clean up listener
-                        window.removeEventListener('message', downloadHandler);
+                    if (type === 'download' && content && content.initiator && content.initiator.url === downloadPath) {
+                        // Handle progress updates
+                        if (content.status === 'progress' && content.progress !== undefined) {
+                            if (onProgress) {
+                                onProgress(parseFloat(content.progress));
+                            }
+                        }
+                        // Handle completion
+                        else if (content.status === 'success') {
+                            // Read the file content
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                resolve(reader.result);
+                            };
+                            reader.onerror = () => {
+                                reject(new Error('Failed to read file content'));
+                            };
+                            reader.readAsText(content.response);
+                            
+                            // Clean up listener
+                            window.removeEventListener('message', downloadHandler);
+                        }
                     }
                 };
                 

@@ -210,15 +210,14 @@ class FluidNCController extends Controller {
 
         progressBar.classList.remove('hidden');
         progressFill.style.width = '0%';
-        
-        // Add indeterminate animation class during download
-        progressBar.classList.add('indeterminate');
 
         try {
-            const content = await this.fluidAPI.readSDFile(file.path);
+            // Download file with progress updates
+            const content = await this.fluidAPI.readSDFile(file.path, (percent) => {
+                progressFill.style.width = percent + '%';
+            });
             
-            // Remove indeterminate animation, switch to determinate progress
-            progressBar.classList.remove('indeterminate');
+            // Switch to parsing progress
             progressFill.style.width = '0%';
 
             // Process the GCode content using existing loadFile logic
@@ -232,7 +231,6 @@ class FluidNCController extends Controller {
         } catch (error) {
             console.error('Failed to load SD file:', error);
             alert('Failed to load file from SD card: ' + error.message);
-            progressBar.classList.remove('indeterminate');
             progressBar.classList.add('hidden');
         }
     }
