@@ -613,6 +613,13 @@ class Controller {
                 this.currentPosition = { x: segment.x1, y: segment.y1, z: segment.z1 };
                 this.highlightGCodeLine(segment.lineNum);
                 document.getElementById('current-file-line').textContent = segment.lineNum || '-';
+                
+                // Update active tool highlighting if tool changed
+                const currentTool = segment.tool || 0;
+                if (this.currentActiveTool !== currentTool) {
+                    this.currentActiveTool = currentTool;
+                    this.updateActiveToolHighlight();
+                }
             } else {
                 document.getElementById('current-file-line').textContent = '-';
             }
@@ -857,7 +864,9 @@ class Controller {
         
         for (const [toolNum, toolState] of this.tools) {
             const toolDiv = document.createElement('div');
-            toolDiv.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 8px; background: var(--canvas-bg); border-radius: 4px;';
+            toolDiv.className = 'tool-item';
+            toolDiv.setAttribute('data-tool', toolNum);
+            toolDiv.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 8px; background: var(--canvas-bg); border-radius: 4px; transition: border 0.2s, box-shadow 0.2s;';
             
             // Visibility checkbox
             const checkbox = document.createElement('input');
@@ -899,6 +908,27 @@ class Controller {
             toolDiv.appendChild(colorPicker);
             toolDiv.appendChild(infoDiv);
             toolList.appendChild(toolDiv);
+        }
+    }
+    
+    /**
+     * Update active tool highlighting in tool panel
+     */
+    updateActiveToolHighlight() {
+        // Remove highlighting from all tools
+        const toolItems = document.querySelectorAll('.tool-item');
+        toolItems.forEach(item => {
+            item.style.border = 'none';
+            item.style.boxShadow = 'none';
+        });
+        
+        // Add highlighting to active tool
+        if (this.currentActiveTool !== undefined) {
+            const activeToolItem = document.querySelector(`.tool-item[data-tool="${this.currentActiveTool}"]`);
+            if (activeToolItem) {
+                activeToolItem.style.border = '2px solid var(--cut-color)';
+                activeToolItem.style.boxShadow = '0 0 8px rgba(0, 204, 255, 0.3)';
+            }
         }
     }
     
