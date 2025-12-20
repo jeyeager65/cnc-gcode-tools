@@ -217,6 +217,6 @@ Write-Host "`nAll builds completed successfully!" -ForegroundColor Green
 Write-Host "Creating .nojekyll file..." -ForegroundColor Cyan
 New-Item -Path "dist/.nojekyll" -ItemType File -Force | Out-Null
 
-# Copy standalone.html to index.html for GitHub Pages
-Write-Host "Creating index.html for GitHub Pages..." -ForegroundColor Cyan
-Copy-Item -Path "dist/standalone.html" -Destination "dist/index.html"
+# Copy landing page to index.html for GitHub Pages
+Write-Host "Creating index.html landing page for GitHub Pages..." -ForegroundColor Cyan
+Copy-Item -Path "src/landing.html" -Destination "dist/index.html"

@@ -14,9 +14,15 @@ class FluidNCController extends Controller {
         this.currentPath = '/';
         this.selectedFile = null;
         this.hasRefittedCamera = false; // Track if we've refitted after tab switch
+        this.isRunning = false; // Track if a file is currently running
+        this.runStartTime = null; // Track when the run started
+        this.statusUpdateInterval = null; // Interval for updating elapsed time
+        this.lastStatusTool = -1; // Track last tool displayed in status panel
+        this.runningFilePath = null; // Track the file path currently running
         this.setupFluidNCListeners();
         this.loadSDFiles();
         this.syncGridFromFluidNC(); // Auto-sync grid dimensions on load
+        this.setupStatusMonitoring(); // Monitor FluidNC status messages
     }
 
     /**
@@ -42,6 +48,195 @@ class FluidNCController extends Controller {
         const fileInput = document.getElementById('file-input');
         if (uploadZone) uploadZone.style.display = 'none';
         if (fileInput) fileInput.style.display = 'none';
+        
+        // Pause/Resume button
+        const pauseResumeBtn = document.getElementById('btn-pause-resume');
+        if (pauseResumeBtn) {
+            pauseResumeBtn.addEventListener('click', () => {
+                this.togglePauseResume();
+            });
+        }
+    }
+    
+    /**
+     * Setup status monitoring from FluidNC stream messages
+     */
+    setupStatusMonitoring() {
+        this.fluidAPI.on('stream', (content) => {
+            this.handleStatusUpdate(content);
+        });
+    }
+    
+    /**
+     * Handle status updates from FluidNC
+     * Format: <Run|MPos:X,Y,Z|FS:feed,speed|SD:percent,filename>
+     */
+    handleStatusUpdate(content) {
+        if (typeof content !== 'string') return;
+        
+        const statusPanel = document.getElementById('status-panel');
+        const isStatusPanelVisible = statusPanel && statusPanel.style.display === 'block';
+        
+        // Extract machine state
+        const stateMatch = content.match(/<([^|>]+)/);
+        if (stateMatch) {
+            const state = stateMatch[1];
+            const statusMachineState = document.getElementById('status-machine-state');
+            if (statusMachineState) {
+                statusMachineState.textContent = state;
+            }
+            
+            const wasRunning = this.isRunning;
+            this.isRunning = (state === 'Run');
+            
+            // Only hide panel when machine returns to Idle state after running
+            if (wasRunning && state === 'Idle' && isStatusPanelVisible) {
+                console.log('Machine returned to Idle, hiding status panel');
+                this.runningFilePath = null; // Clear running file
+                this.hideStatusPanel();
+            }
+        }
+        
+        // Extract SD card progress - only if it matches the running file
+        if (content.includes('SD:')) {
+            const sdMatch = content.match(/SD:([\d.]+),(.+)>/);
+            if (sdMatch) {
+                const percent = parseFloat(sdMatch[1]);
+                const filename = sdMatch[2].trim();
+                
+                // FluidNC prefixes with /sd/ when reporting, normalize both paths for comparison
+                const normalizedReported = filename.replace(/^\/sd/, '');
+                const normalizedExpected = this.runningFilePath ? this.runningFilePath.replace(/^\/sd/, '') : null;
+                
+                // Only update if this matches our running file (ignore M6 macro files)
+                if (normalizedExpected && normalizedReported === normalizedExpected) {
+                    const statusProgress = document.getElementById('status-progress');
+                    if (statusProgress) {
+                        statusProgress.textContent = `${percent.toFixed(2)}%`;
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Toggle pause/resume
+     */
+    async togglePauseResume() {
+        const btn = document.getElementById('btn-pause-resume');
+        
+        if (btn.textContent === 'Pause') {
+            // Send pause command (!)
+            await this.fluidAPI.sendCommandNoWait('!');
+            btn.textContent = 'Resume';
+        } else {
+            // Send resume command (~)
+            await this.fluidAPI.sendCommandNoWait('~');
+            btn.textContent = 'Pause';
+        }
+    }
+    
+    /**
+     * Show status panel and hide SD files/statistics
+     */
+    showStatusPanel() {
+        console.log('[STATUS PANEL] showStatusPanel called');
+        const statusPanel = document.getElementById('status-panel');
+        const sdFilesPanel = document.getElementById('sd-files-panel');
+        const statsPanel = document.getElementById('statistics-panel');
+        
+        console.log('showStatusPanel - elements found:', {
+            statusPanel: !!statusPanel,
+            sdFilesPanel: !!sdFilesPanel,
+            statsPanel: !!statsPanel
+        });
+        
+        console.log('BEFORE style changes:', {
+            statusDisplay: statusPanel?.style.display,
+            sdFilesDisplay: sdFilesPanel?.style.display,
+            statsDisplay: statsPanel?.style.display
+        });
+        
+        if (statusPanel) statusPanel.style.display = 'block';
+        if (sdFilesPanel) sdFilesPanel.style.display = 'none';
+        if (statsPanel) statsPanel.style.display = 'none';
+        
+        console.log('AFTER style changes:', {
+            statusDisplay: statusPanel?.style.display,
+            sdFilesDisplay: sdFilesPanel?.style.display,
+            statsDisplay: statsPanel?.style.display
+        });
+        
+        // Start elapsed time tracking
+        this.runStartTime = Date.now();
+        this.statusUpdateInterval = setInterval(() => {
+            this.updateElapsedTime();
+        }, 1000);
+    }
+    
+    /**
+     * Hide status panel and show SD files/statistics
+     */
+    hideStatusPanel() {
+        console.log('[STATUS PANEL] hideStatusPanel called');
+        console.trace(); // Show call stack
+        
+        const statusPanel = document.getElementById('status-panel');
+        const sdFilesPanel = document.getElementById('sd-files-panel');
+        const statsPanel = document.getElementById('statistics-panel');
+        
+        if (statusPanel) statusPanel.style.display = 'none';
+        if (sdFilesPanel) sdFilesPanel.style.display = 'block';
+        if (statsPanel) statsPanel.style.display = 'block';
+        
+        // Stop elapsed time tracking
+        if (this.statusUpdateInterval) {
+            clearInterval(this.statusUpdateInterval);
+            this.statusUpdateInterval = null;
+        }
+        
+        // Reset pause button
+        const pauseBtn = document.getElementById('btn-pause-resume');
+        if (pauseBtn) pauseBtn.textContent = 'Pause';
+    }
+    
+    /**
+     * Update elapsed and remaining time
+     */
+    updateElapsedTime() {
+        if (!this.runStartTime) return;
+        
+        const elapsed = Math.floor((Date.now() - this.runStartTime) / 1000);
+        const elapsedStr = this.formatTime(elapsed);
+        document.getElementById('status-elapsed-time').textContent = elapsedStr;
+        
+        // Calculate remaining time based on progress
+        const progressEl = document.getElementById('status-progress');
+        const progressText = progressEl.textContent;
+        const percentMatch = progressText.match(/([\d.]+)%/);
+        
+        if (percentMatch) {
+            const percent = parseFloat(percentMatch[1]);
+            if (percent > 0 && percent < 100) {
+                const totalEstimated = (elapsed / percent) * 100;
+                const remaining = Math.floor(totalEstimated - elapsed);
+                document.getElementById('status-remaining-time').textContent = this.formatTime(remaining);
+            }
+        }
+    }
+    
+    /**
+     * Format seconds to HH:MM:SS
+     */
+    formatTime(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        
+        if (h > 0) {
+            return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+        return `${m}:${s.toString().padStart(2, '0')}`;
     }
 
     /**
@@ -349,30 +544,214 @@ class FluidNCController extends Controller {
      * Run file on CNC
      */
     async runSDFile(file) {
+        console.log('runSDFile called with file:', file);
+        
         if (!confirm(`Run ${file.name} on the CNC?\n\nThis will start the job immediately.`)) {
+            console.log('User canceled run confirmation');
             return;
         }
 
+        console.log('User confirmed, starting run...');
+        
+        // Track which file is running
+        this.runningFilePath = file.path;
+        
         const btn = document.getElementById('btn-run-file');
         btn.disabled = true;
         btn.textContent = 'Running...';
 
         try {
-            await this.fluidAPI.runSDFile(file.path);
+            // Calculate total file size in bytes for progress tracking
+            const fileContent = this.gcodeText || '';
+            const totalBytes = new Blob([fileContent]).size;
+            
+            // Setup smooth interpolation between progress updates
+            let interpolationAnimationFrame = null;
+            let currentDisplayIndex = 0;
+            let targetDisplayIndex = 0;
+            
+            const smoothInterpolate = () => {
+                if (currentDisplayIndex < targetDisplayIndex) {
+                    // Move towards target at a smooth rate
+                    const remaining = targetDisplayIndex - currentDisplayIndex;
+                    const step = Math.max(1, Math.ceil(remaining / 10)); // Move 10% of remaining distance
+                    currentDisplayIndex = Math.min(currentDisplayIndex + step, targetDisplayIndex);
+                    
+                    this.animator.currentIndex = Math.floor(currentDisplayIndex);
+                    this.animator.segmentProgress = currentDisplayIndex % 1;
+                    
+                    if (this.animator.onUpdate) {
+                        this.animator.onUpdate(this.animator.currentIndex, this.animator.segmentProgress);
+                    }
+                    
+                    // Continue interpolating if not at target
+                    if (currentDisplayIndex < targetDisplayIndex) {
+                        interpolationAnimationFrame = requestAnimationFrame(smoothInterpolate);
+                    }
+                }
+            };
+            
+            // Keep animator paused - we'll manually update position
+            this.animator.pause();
+            
+            console.log('About to show status panel...');
+            // Show status panel and initialize fields
+            this.showStatusPanel();
+            console.log('Status panel shown');
+            
+            // Set total time estimate
+            if (this.animator.estimatedTotalTime) {
+                document.getElementById('status-total-time').textContent = 
+                    this.formatTime(Math.floor(this.animator.estimatedTotalTime));
+            }
+            
+            // Set initial tool
+            this.lastStatusTool = -1;
+            if (this.segments && this.segments[0]) {
+                const initialTool = this.segments[0].tool || 0;
+                this.lastStatusTool = initialTool;
+                document.getElementById('status-current-tool').textContent = `T${initialTool}`;
+            }
+            
+            // Throttle progress updates to avoid excessive calls
+            let lastUpdateTime = 0;
+            const updateInterval = 200; // Update at most every 200ms
+            
+            console.log('About to call fluidAPI.runSDFile...');
+            // Monitor progress and sync animation position
+            await this.fluidAPI.runSDFile(file.path, (percent) => {
+                const now = Date.now();
+                if (now - lastUpdateTime < updateInterval) {
+                    return; // Skip this update
+                }
+                lastUpdateTime = now;
+                
+                // Calculate byte position from percentage
+                const bytePosition = Math.floor((percent / 100) * totalBytes);
+                
+                // Find segment index corresponding to this byte position
+                const newTargetIndex = this.findSegmentByBytePosition(bytePosition);
+                
+                if (newTargetIndex >= 0 && newTargetIndex !== targetDisplayIndex) {
+                    // Set new target for smooth interpolation
+                    targetDisplayIndex = newTargetIndex;
+                    
+                    // Cancel any existing interpolation
+                    if (interpolationAnimationFrame) {
+                        cancelAnimationFrame(interpolationAnimationFrame);
+                    }
+                    
+                    // Start smooth interpolation to new target
+                    interpolationAnimationFrame = requestAnimationFrame(smoothInterpolate);
+                    
+                    // Update current tool display if tool changed
+                    if (this.segments[newTargetIndex]) {
+                        const currentTool = this.segments[newTargetIndex].tool || 0;
+                        if (this.lastStatusTool !== currentTool) {
+                            this.lastStatusTool = currentTool;
+                            document.getElementById('status-current-tool').textContent = `T${currentTool}`;
+                        }
+                    }
+                }
+            });
+            
+            console.log('fluidAPI.runSDFile completed');
+            
+            // Stop interpolation if still running
+            if (interpolationAnimationFrame) {
+                cancelAnimationFrame(interpolationAnimationFrame);
+            }
+            
             btn.textContent = '✓ Started';
             setTimeout(() => {
-                btn.textContent = 'Run on CNC';
+                btn.textContent = 'Run';
                 btn.disabled = false;
             }, 3000);
+            
+            // Note: Status panel will be hidden automatically when machine state changes to non-running
+            // via handleStatusUpdate() monitoring the stream messages
         } catch (error) {
             console.error('Failed to run SD file:', error);
             alert('Failed to run file: ' + error.message);
             btn.textContent = '✗ Failed';
             setTimeout(() => {
-                btn.textContent = 'Run on CNC';
+                btn.textContent = 'Run';
                 btn.disabled = false;
             }, 3000);
+            // Hide status panel on error
+            this.hideStatusPanel();
         }
+    }
+    
+    /**
+     * Find segment index based on byte position in file
+     */
+    findSegmentByBytePosition(bytePosition) {
+        if (!this.segments || this.segments.length === 0) return -1;
+        
+        // If we don't have byte positions cached, calculate them
+        if (!this.segmentBytePositions) {
+            this.calculateSegmentBytePositions();
+        }
+        
+        // Binary search to find the segment
+        let left = 0;
+        let right = this.segmentBytePositions.length - 1;
+        
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            if (this.segmentBytePositions[mid] <= bytePosition) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+        
+        return Math.min(right, this.segments.length - 1);
+    }
+    
+    /**
+     * Calculate cumulative byte positions for each segment
+     */
+    calculateSegmentBytePositions() {
+        if (!this.gcodeText || !this.segments) return;
+        
+        console.log('[PERF] calculateSegmentBytePositions - START', new Date().toISOString());
+        const startTime = performance.now();
+        
+        const lines = this.gcodeText.split('\n');
+        this.segmentBytePositions = [];
+        
+        // Use TextEncoder for fast byte length calculation (much faster than Blob)
+        const encoder = new TextEncoder();
+        
+        // Pre-calculate byte length of each line (including newline)
+        const lineByteLengths = [];
+        let cumulativeBytes = 0;
+        
+        for (let i = 0; i < lines.length; i++) {
+            // TextEncoder.encode() is 100x faster than new Blob()
+            const lineBytes = encoder.encode(lines[i] + '\n').length;
+            cumulativeBytes += lineBytes;
+            lineByteLengths.push(cumulativeBytes);
+        }
+        
+        // Map segment line numbers to byte positions
+        for (let i = 0; i < this.segments.length; i++) {
+            const seg = this.segments[i];
+            const lineNum = seg.lineNum || 0;
+            
+            if (lineNum > 0 && lineNum <= lineByteLengths.length) {
+                this.segmentBytePositions.push(lineByteLengths[lineNum - 1]);
+            } else {
+                this.segmentBytePositions.push(cumulativeBytes);
+            }
+        }
+        
+        const endTime = performance.now();
+        const duration = (endTime - startTime).toFixed(2);
+        console.log(`[PERF] calculateSegmentBytePositions - END (took ${duration}ms)`, new Date().toISOString());
+        console.log(`[PERF] Processed ${this.segments.length} segments, ${lines.length} lines`);
     }
 
     /**

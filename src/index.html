@@ -185,15 +185,14 @@
             <div class="panel">
                 <h3>Layer Filter</h3>
                 <div class="layer-controls">
-                    <div class="layer-inputs">
-                        <div>
-                            <label style="font-size: 12px;">Min Z</label>
-                            <input type="number" id="layer-min" step="0.1" placeholder="Auto">
-                        </div>
-                        <div>
-                            <label style="font-size: 12px;">Max Z</label>
-                            <input type="number" id="layer-max" step="0.1" placeholder="Auto">
-                        </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px;">
+                        <span>Min: <span id="layer-min-value">-</span></span>
+                        <span>Max: <span id="layer-max-value">-</span></span>
+                    </div>
+                    <div class="dual-range-slider">
+                        <div class="range-highlight" id="layer-range-highlight"></div>
+                        <input type="range" id="layer-slider-min" class="range-min" step="0.1">
+                        <input type="range" id="layer-slider-max" class="range-max" step="0.1">
                     </div>
                 </div>
             </div>

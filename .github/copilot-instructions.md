@@ -1,36 +1,49 @@
 # CNC GCode Viewer - AI Coding Agent Instructions
 
 ## Project Overview
-A lightweight, zero-dependency web-based CNC GCode viewer with 2D/3D visualization. Built as **pure vanilla JavaScript** with no frameworks or external libraries. Two versions: **standalone** (local file viewing) and **FluidNC** (embedded ESP32/FluidNC integration with SD card browser).
+A lightweight, zero-dependency web-based CNC GCode viewer with 2D/3D visualization. Built as **pure vanilla JavaScript** with no frameworks or external libraries. Three versions: **standalone** (local file viewing), **FluidNC** (embedded ESP32/FluidNC integration with SD card browser), and **Font Creator** (tool for creating CNC-engraved fonts).
 
 **Critical constraint:** Total uncompressed size must stay under **135KB** (~45KB gzipped). Currently at ~133KB.
+
+**Philosophy:** Every byte counts. Prioritize code size over abstractions. Inline small functions, reuse variables, use ternary operators. No frameworks, no dependencies, no polyfills.
 
 ## Architecture
 
 ### Module Structure (ES6 Classes)
-All classes are **globally scoped** (no modules/imports) for single-file HTML inlining:
+All classes are **globally scoped** (no modules/imports) for single-file HTML inlining. Each file defines exactly one class:
 
-- **`GCodeParser`** (`parser.js`) - Streaming parser with modal state tracking, adaptive arc tessellation
-- **`Camera`** (`camera.js`) - View/projection matrix calculations, pan/zoom/rotate transforms
-- **`Renderer2D`** (`renderer2d.js`) - Canvas 2D rendering with grid, coordinate display
-- **`Renderer3D`** (`renderer3d.js`) - WebGL renderer with depth testing, custom shaders
-- **`Animator`** (`animator.js`) - Frame-by-frame playback with speed control
-- **`Controller`** (`controller.js`) - Main application logic, event handling, tool/layer state
-- **`FluidNCAPI`** (`fluidnc-api.js`) - REST API client for FluidNC devices
-- **`FluidNCController`** (`fluidnc-controller.js`) - Extends `Controller` for SD card browser
+**Core Architecture (`src/js/`):**
+- `parser.js` → `GCodeParser` - Streams GCode in 50KB chunks, converts to segments with modal state tracking
+- `camera.js` → `Camera` - Shared view transforms for both renderers (pan/zoom/rotate)
+- `renderer2d.js` → `Renderer2D` - Canvas 2D with manual matrix math
+- `renderer3d.js` → `Renderer3D` - WebGL with MVP matrix, custom shaders, depth testing
+- `animator.js` → `Animator` - Frame-by-frame playback via `requestAnimationFrame`
+- `controller.js` → `Controller` - Main app logic, owns parser/camera/renderers/animator
 
-**Data flow:** File → `GCodeParser` → segments array → `Controller` → `Renderer2D`/`Renderer3D` → Canvas
+**Extensions:**
+- `fluidnc-api.js` → `FluidNCAPI` - REST client for ESP32/FluidNC devices
+- `fluidnc-controller.js` → `FluidNCController` - Extends `Controller`, adds SD card browser
+- `font-creator-controller.js` → `FontCreatorController` - Character glyph editor with path simplification
+- `font-creator-app.js` - App initialization for Font Creator (no class, just init code)
+
+**Data flow:** File → `GCodeParser.parseFile()` → `segments[]` → `Controller.loadSegments()` → `Renderer*.render()` → Canvas
 
 ### Build System (`build.ps1`)
-PowerShell script that:
-1. Inlines CSS (`common.css`, `fluidnc.css`) into HTML `<style>` tags
-2. Concatenates all JS files in correct dependency order
-3. Minifies JS with Terser (3 compression passes)
-4. Removes HTML comments/whitespace
-5. Creates `.gz` files for embedded deployment
-6. Outputs: `dist/standalone.html` and `dist/gcodeviewer.html`
+PowerShell script that creates three single-file HTML distributions:
+1. **Standalone** (`dist/standalone.html`) - Local file viewer, includes: parser, camera, renderer2d, renderer3d, animator, controller
+2. **FluidNC** (`dist/gcodeviewer.html`) - ESP32 device integration, adds: fluidnc-api, fluidnc-controller
+3. **Font Creator** (`dist/fontcreator.html`) - Font design tool, adds: font-creator-controller, font-creator-app
 
-**Run build:** `.\build.ps1` (requires `terser` npm package globally)
+**Build process:**
+1. Reads HTML template from `src/{index,fluidnc,font-creator}.html`
+2. Inlines CSS from `src/css/common.css` (+ `fluidnc.css`/`font-creator.css` if applicable) into `<style>` tags
+3. Concatenates JS files in dependency order (see `$builds` array in `build.ps1`)
+4. Minifies JS with Terser (3 passes: `--compress passes=3`)
+5. Strips HTML comments/whitespace
+6. Creates `.gz` versions for embedded deployment
+
+**Run:** `.\build.ps1` (requires `npm install -g terser`)
+**Output:** `dist/*.html` + `dist/*.html.gz` (check file sizes in console output)
 
 ## Key Development Patterns
 
@@ -216,7 +229,7 @@ Automated on version tag push (`v*.*.*`):
 2. Install Node.js + Terser
 3. Run `build.ps1` via PowerShell
 4. Create GitHub Release with `dist/*.html` and `dist/*.html.gz` as artifacts
-5. Deploy `dist/standalone.html` to GitHub Pages
+5. Deploy to GitHub Pages with `index.html` landing page linking to all versions
 
 ## Documentation Standards
 

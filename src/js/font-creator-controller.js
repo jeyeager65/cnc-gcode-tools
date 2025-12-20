@@ -98,6 +98,7 @@ class FontCreatorController {
         document.getElementById('preview-font').onclick = () => this.previewFont();
         document.getElementById('delete-font').onclick = () => this.deleteFont();
         document.getElementById('import-font-btn').onclick = () => document.getElementById('import-font').click();
+        document.getElementById('import-svg-font-btn').onclick = () => document.getElementById('import-svg-font').click();
         document.getElementById('export-font').onclick = () => this.exportFont();
         
         // Collapsible sections
@@ -171,6 +172,7 @@ class FontCreatorController {
         };
         
         document.getElementById('import-font').onchange = (e) => this.importFont(e);
+        document.getElementById('import-svg-font').onchange = (e) => this.importSVGFont(e);
         document.getElementById('toggle-guides').onclick = () => this.toggleGuides();
         document.getElementById('add-kerning').onclick = () => this.addKerning();
         
@@ -195,6 +197,9 @@ class FontCreatorController {
             document.querySelector('.tab-button[data-tab="gcode-preview"]').click();
         };
         document.getElementById('export-image').onclick = () => this.exportImage();
+        document.getElementById('export-svg').onclick = () => this.exportSVG();
+        document.getElementById('export-dxf').onclick = () => this.exportDXF();
+        document.getElementById('export-svg-font').onclick = () => this.exportSVGFont();
         document.getElementById('font-selector').onchange = () => this.loadSelectedFont();
     }
 
@@ -1051,6 +1056,271 @@ class FontCreatorController {
         reader.readAsText(file);
     }
 
+    // Import SVG font and convert to GCode font format
+    importSVGFont(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                // Parse SVG XML
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(event.target.result, 'image/svg+xml');
+                
+                // Check for parse errors
+                const parserError = doc.querySelector('parsererror');
+                if (parserError) {
+                    throw new Error('Invalid SVG file');
+                }
+                
+                // Find font element
+                const fontElement = doc.querySelector('font');
+                if (!fontElement) {
+                    throw new Error('No font found in SVG file');
+                }
+                
+                // Get font metrics
+                const fontFace = fontElement.querySelector('font-face');
+                const unitsPerEm = parseFloat(fontFace?.getAttribute('units-per-em') || '1000');
+                const fontFamily = fontFace?.getAttribute('font-family') || 'Imported SVG Font';
+                
+                // Scale from font units to canvas coordinates
+                const canvasHeight = this.canvas.height;
+                const scale = canvasHeight / unitsPerEm;
+                
+                // Parse glyphs
+                const glyphs = fontElement.querySelectorAll('glyph');
+                const importedFont = {};
+                let glyphCount = 0;
+                
+                glyphs.forEach(glyph => {
+                    const unicode = glyph.getAttribute('unicode');
+                    if (!unicode || unicode.length === 0) return;
+                    
+                    const pathData = glyph.getAttribute('d');
+                    if (!pathData) return;
+                    
+                    // Convert SVG path to strokes
+                    const strokes = this.parseSVGPath(pathData, scale, canvasHeight);
+                    if (strokes.length === 0) return;
+                    
+                    // Calculate bounds for this character
+                    const bounds = this.calculateBounds(strokes);
+                    
+                    importedFont[unicode] = {
+                        strokes: strokes,
+                        bounds: bounds
+                    };
+                    glyphCount++;
+                });
+                
+                if (glyphCount === 0) {
+                    throw new Error('No valid glyphs found in SVG font');
+                }
+                
+                // Create new font ID
+                this.currentFontId = 'font_' + Date.now();
+                this.font = importedFont;
+                this.kerning = {}; // SVG font kerning would need separate parsing
+                document.getElementById('font-name').value = fontFamily;
+                
+                // Update UI
+                document.querySelectorAll('.char-button').forEach(btn => btn.classList.remove('defined'));
+                Object.keys(this.font).forEach(char => {
+                    const btn = Array.from(document.querySelectorAll('.char-button')).find(b => b.dataset.char === char);
+                    if (btn) btn.classList.add('defined');
+                });
+                
+                this.saveToLocalStorage();
+                this.updateStatus(`SVG Font imported: ${fontFamily} (${glyphCount} characters)`);
+                
+            } catch (err) {
+                alert('Error importing SVG font: ' + err.message);
+            }
+        };
+        reader.readAsText(file);
+    }
+    
+    // Parse SVG path data and convert to strokes (supports M, L, Q commands)
+    parseSVGPath(pathData, scale, canvasHeight) {
+        const strokes = [];
+        let currentStroke = [];
+        let currentX = 0, currentY = 0;
+        let startX = 0, startY = 0;
+        
+        // Parse path commands
+        const commands = pathData.match(/[MmLlHhVvQqTtCcSsAaZz][^MmLlHhVvQqTtCcSsAaZz]*/g);
+        if (!commands) return strokes;
+        
+        commands.forEach(cmd => {
+            const type = cmd[0];
+            const values = cmd.slice(1).trim().split(/[\s,]+/).filter(v => v).map(parseFloat);
+            
+            switch (type) {
+                case 'M': // Absolute moveto
+                    if (currentStroke.length > 0) {
+                        strokes.push(currentStroke);
+                        currentStroke = [];
+                    }
+                    currentX = values[0];
+                    currentY = values[1];
+                    startX = currentX;
+                    startY = currentY;
+                    currentStroke.push({
+                        x: currentX * scale,
+                        y: canvasHeight - (currentY * scale) // Flip Y axis
+                    });
+                    break;
+                    
+                case 'm': // Relative moveto
+                    if (currentStroke.length > 0) {
+                        strokes.push(currentStroke);
+                        currentStroke = [];
+                    }
+                    currentX += values[0];
+                    currentY += values[1];
+                    startX = currentX;
+                    startY = currentY;
+                    currentStroke.push({
+                        x: currentX * scale,
+                        y: canvasHeight - (currentY * scale)
+                    });
+                    break;
+                    
+                case 'L': // Absolute lineto
+                    for (let i = 0; i < values.length; i += 2) {
+                        currentX = values[i];
+                        currentY = values[i + 1];
+                        currentStroke.push({
+                            x: currentX * scale,
+                            y: canvasHeight - (currentY * scale)
+                        });
+                    }
+                    break;
+                    
+                case 'l': // Relative lineto
+                    for (let i = 0; i < values.length; i += 2) {
+                        currentX += values[i];
+                        currentY += values[i + 1];
+                        currentStroke.push({
+                            x: currentX * scale,
+                            y: canvasHeight - (currentY * scale)
+                        });
+                    }
+                    break;
+                    
+                case 'H': // Absolute horizontal lineto
+                    values.forEach(x => {
+                        currentX = x;
+                        currentStroke.push({
+                            x: currentX * scale,
+                            y: canvasHeight - (currentY * scale)
+                        });
+                    });
+                    break;
+                    
+                case 'h': // Relative horizontal lineto
+                    values.forEach(dx => {
+                        currentX += dx;
+                        currentStroke.push({
+                            x: currentX * scale,
+                            y: canvasHeight - (currentY * scale)
+                        });
+                    });
+                    break;
+                    
+                case 'V': // Absolute vertical lineto
+                    values.forEach(y => {
+                        currentY = y;
+                        currentStroke.push({
+                            x: currentX * scale,
+                            y: canvasHeight - (currentY * scale)
+                        });
+                    });
+                    break;
+                    
+                case 'v': // Relative vertical lineto
+                    values.forEach(dy => {
+                        currentY += dy;
+                        currentStroke.push({
+                            x: currentX * scale,
+                            y: canvasHeight - (currentY * scale)
+                        });
+                    });
+                    break;
+                    
+                case 'Q': // Absolute quadratic bezier
+                    for (let i = 0; i < values.length; i += 4) {
+                        const cx = values[i];
+                        const cy = values[i + 1];
+                        const x = values[i + 2];
+                        const y = values[i + 3];
+                        
+                        // Tessellate quadratic bezier into line segments
+                        const steps = 10;
+                        for (let t = 1; t <= steps; t++) {
+                            const ratio = t / steps;
+                            const inv = 1 - ratio;
+                            const bx = inv * inv * currentX + 2 * inv * ratio * cx + ratio * ratio * x;
+                            const by = inv * inv * currentY + 2 * inv * ratio * cy + ratio * ratio * y;
+                            currentStroke.push({
+                                x: bx * scale,
+                                y: canvasHeight - (by * scale)
+                            });
+                        }
+                        currentX = x;
+                        currentY = y;
+                    }
+                    break;
+                    
+                case 'q': // Relative quadratic bezier
+                    for (let i = 0; i < values.length; i += 4) {
+                        const cx = currentX + values[i];
+                        const cy = currentY + values[i + 1];
+                        const x = currentX + values[i + 2];
+                        const y = currentY + values[i + 3];
+                        
+                        const steps = 10;
+                        for (let t = 1; t <= steps; t++) {
+                            const ratio = t / steps;
+                            const inv = 1 - ratio;
+                            const bx = inv * inv * currentX + 2 * inv * ratio * cx + ratio * ratio * x;
+                            const by = inv * inv * currentY + 2 * inv * ratio * cy + ratio * ratio * y;
+                            currentStroke.push({
+                                x: bx * scale,
+                                y: canvasHeight - (by * scale)
+                            });
+                        }
+                        currentX = x;
+                        currentY = y;
+                    }
+                    break;
+                    
+                case 'Z':
+                case 'z': // Close path
+                    if (currentStroke.length > 0) {
+                        // Add line back to start if not already there
+                        const lastPoint = currentStroke[currentStroke.length - 1];
+                        const firstPoint = currentStroke[0];
+                        if (Math.abs(lastPoint.x - firstPoint.x) > 0.1 || Math.abs(lastPoint.y - firstPoint.y) > 0.1) {
+                            currentStroke.push({ x: firstPoint.x, y: firstPoint.y });
+                        }
+                    }
+                    currentX = startX;
+                    currentY = startY;
+                    break;
+            }
+        });
+        
+        // Add final stroke
+        if (currentStroke.length > 0) {
+            strokes.push(currentStroke);
+        }
+        
+        return strokes;
+    }
+
     // Generate GCode from text input with kerning support
     generateGCode() {
         const text = document.getElementById('text-input').value;
@@ -1674,6 +1944,543 @@ class FontCreatorController {
         this.updateStatus('Image exported!');
     }
 
+    // Export text as SVG for vector graphics
+    exportSVG() {
+        const text = document.getElementById('text-input').value;
+        let outputSize = parseFloat(document.getElementById('output-size').value);
+        const charSpacing = parseFloat(document.getElementById('char-spacing').value);
+        const spaceWidth = parseFloat(document.getElementById('space-width').value);
+        const lineGap = parseFloat(document.getElementById('line-spacing').value);
+        const maxWidth = parseFloat(document.getElementById('max-width').value);
+        const maxHeight = parseFloat(document.getElementById('max-height').value);
+        const autoFit = document.getElementById('auto-fit').checked;
+        
+        if (!text) {
+            alert('Please enter text to export');
+            return;
+        }
+
+        // Use consistent scaling
+        const referenceHeight = this.canvas.height;
+        let scale = outputSize / referenceHeight;
+        
+        // Calculate actual maximum character height in the font (in canvas coordinates)
+        let maxCharHeight = 0;
+        for (const char in this.font) {
+            const charData = this.font[char];
+            if (charData && charData.bounds) {
+                maxCharHeight = Math.max(maxCharHeight, charData.bounds.height);
+            }
+        }
+        
+        // If no characters have height, fall back to reference height
+        if (maxCharHeight === 0) maxCharHeight = referenceHeight;
+        
+        // Line spacing based on actual character height, not reference canvas height
+        // This ensures visual spacing matches the rendered character size
+        let actualCharHeightMM = maxCharHeight * scale;
+        let lineSpacing = actualCharHeightMM + lineGap;
+
+        // Calculate text dimensions (reuse same wrapping logic as exportImage)
+        const inputLines = text.split('\n');
+        let wrappedLines = [];
+        
+        if (maxWidth > 0) {
+            inputLines.forEach(inputLine => {
+                const words = inputLine.split(' ');
+                let currentLine = '';
+                let currentWidth = 0;
+                
+                words.forEach((word) => {
+                    let wordWidth = 0;
+                    for (let i = 0; i < word.length; i++) {
+                        const char = word[i];
+                        const charData = this.font[char];
+                        if (charData) {
+                            const bounds = charData.bounds;
+                            wordWidth += bounds.width * scale + charSpacing;
+                        } else {
+                            wordWidth += outputSize * 0.5 + charSpacing;
+                        }
+                    }
+                    
+                    const spaceWidthTotal = spaceWidth + charSpacing;
+                    
+                    if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
+                        wrappedLines.push(currentLine);
+                        currentLine = word;
+                        currentWidth = wordWidth;
+                    } else {
+                        if (currentLine.length > 0) {
+                            currentLine += ' ' + word;
+                            currentWidth += spaceWidthTotal + wordWidth;
+                        } else {
+                            currentLine = word;
+                            currentWidth = wordWidth;
+                        }
+                    }
+                });
+                
+                wrappedLines.push(currentLine);
+            });
+        } else {
+            wrappedLines.push(...inputLines);
+        }
+
+        // Auto-fit: same logic as exportImage
+        if (autoFit && (maxWidth > 0 || maxHeight > 0)) {
+            const maxTextSize = parseFloat(document.getElementById('max-text-size').value);
+            
+            const calculateDimensions = (testSize) => {
+                const testScale = testSize / referenceHeight;
+                const testActualCharHeightMM = maxCharHeight * testScale;
+                const testLineSpacing = testActualCharHeightMM + lineGap;
+                
+                const testWrappedLines = [];
+                if (maxWidth > 0) {
+                    inputLines.forEach(inputLine => {
+                        const words = inputLine.split(' ');
+                        let currentLine = '';
+                        let currentWidth = 0;
+                        
+                        words.forEach((word) => {
+                            let wordWidth = 0;
+                            for (let i = 0; i < word.length; i++) {
+                                const char = word[i];
+                                const charData = this.font[char];
+                                if (charData) {
+                                    const bounds = charData.bounds;
+                                    wordWidth += bounds.width * testScale + charSpacing;
+                                } else {
+                                    wordWidth += testSize * 0.5 + charSpacing;
+                                }
+                            }
+                            
+                            const spaceWidthTotal = spaceWidth + charSpacing;
+                            
+                            if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
+                                testWrappedLines.push(currentLine);
+                                currentLine = word;
+                                currentWidth = wordWidth;
+                            } else {
+                                if (currentLine.length > 0) {
+                                    currentLine += ' ' + word;
+                                    currentWidth += spaceWidthTotal + wordWidth;
+                                } else {
+                                    currentLine = word;
+                                    currentWidth = wordWidth;
+                                }
+                            }
+                        });
+                        
+                        testWrappedLines.push(currentLine);
+                    });
+                } else {
+                    testWrappedLines.push(...inputLines);
+                }
+                
+                let maxLineWidth = 0;
+                testWrappedLines.forEach(line => {
+                    let lineWidth = 0;
+                    for (let i = 0; i < line.length; i++) {
+                        const char = line[i];
+                        const charData = this.font[char];
+                        if (charData) {
+                            lineWidth += charData.bounds.width * testScale + charSpacing;
+                        } else {
+                            lineWidth += (char === ' ' ? spaceWidth : testSize * 0.5) + charSpacing;
+                        }
+                    }
+                    maxLineWidth = Math.max(maxLineWidth, lineWidth);
+                });
+                
+                let totalHeight = testSize;
+                for (let i = 1; i < testWrappedLines.length; i++) {
+                    totalHeight += testWrappedLines[i].length === 0 ? testSize * 0.5 : testLineSpacing;
+                }
+                
+                return { width: maxLineWidth, height: totalHeight, wrappedLines: testWrappedLines };
+            };
+            
+            let bestSize = outputSize;
+            let bestWrappedLines = wrappedLines;
+            
+            for (let testSize = outputSize; testSize <= maxTextSize; testSize += 0.5) {
+                const dims = calculateDimensions(testSize);
+                const fitsWidth = maxWidth <= 0 || dims.width <= maxWidth;
+                const fitsHeight = maxHeight <= 0 || dims.height <= maxHeight;
+                
+                if (fitsWidth && fitsHeight) {
+                    bestSize = testSize;
+                    bestWrappedLines = dims.wrappedLines;
+                } else {
+                    break;
+                }
+            }
+            
+            outputSize = bestSize;
+            wrappedLines = bestWrappedLines;
+            scale = outputSize / referenceHeight;
+            actualCharHeightMM = maxCharHeight * scale;
+            lineSpacing = actualCharHeightMM + lineGap;
+        }
+
+        // Calculate total dimensions
+        let maxLineWidth = 0;
+        wrappedLines.forEach(line => {
+            let lineWidth = 0;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const charData = this.font[char];
+                if (charData) {
+                    lineWidth += charData.bounds.width * scale + charSpacing;
+                } else {
+                    lineWidth += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
+                }
+            }
+            maxLineWidth = Math.max(maxLineWidth, lineWidth);
+        });
+
+        // Recalculate in case scale changed without auto-fit
+        actualCharHeightMM = maxCharHeight * scale;
+        let totalHeight = actualCharHeightMM;
+        for (let i = 1; i < wrappedLines.length; i++) {
+            totalHeight += wrappedLines[i].length === 0 ? actualCharHeightMM * 0.5 : lineSpacing;
+        }
+        
+        const padding = 20;
+        const mmWidth = maxLineWidth + padding * 2;
+        const mmHeight = totalHeight + padding * 2;
+        
+        // Scale mm to pixels for display (3.78 pixels per mm at 96 DPI, using 4x for better visibility)
+        const mmToPixel = 4;
+        const canvasWidth = mmWidth * mmToPixel;
+        const canvasHeight = mmHeight * mmToPixel;
+
+        // Build SVG with proper scaling
+        let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+        svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${mmWidth} ${mmHeight}">\n`;
+        svg += `  <rect width="100%" height="100%" fill="white"/>\n`;
+        svg += `  <g stroke="black" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" fill="none">\n`;
+
+        let currentY = padding;
+
+        wrappedLines.forEach((line) => {
+            let currentX = padding;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const charData = this.font[char];
+
+                if (!charData) {
+                    currentX += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
+                    continue;
+                }
+
+                const bounds = charData.bounds;
+                charData.strokes.forEach(stroke => {
+                    if (stroke.length < 2) return;
+                    
+                    let pathData = '';
+                    const firstPoint = stroke[0];
+                    const x0 = (firstPoint.x - bounds.minX) * scale + currentX;
+                    const y0 = firstPoint.y * scale + currentY;
+                    pathData += `M ${x0.toFixed(2)} ${y0.toFixed(2)}`;
+                    
+                    for (let j = 1; j < stroke.length; j++) {
+                        const x = (stroke[j].x - bounds.minX) * scale + currentX;
+                        const y = stroke[j].y * scale + currentY;
+                        pathData += ` L ${x.toFixed(2)} ${y.toFixed(2)}`;
+                    }
+                    
+                    svg += `    <path d="${pathData}"/>\n`;
+                });
+
+                currentX += bounds.width * scale + charSpacing;
+            }
+
+            const lineAdvance = line.length === 0 ? outputSize * 0.5 : lineSpacing;
+            currentY += lineAdvance;
+        });
+
+        svg += `  </g>\n`;
+        svg += `</svg>`;
+
+        // Download SVG
+        const blob = new Blob([svg], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const fontName = document.getElementById('font-name').value.replace(/\s+/g, '_');
+        a.download = `${fontName}_text.svg`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        this.updateStatus('SVG exported!');
+    }
+
+    // Export text as DXF for CAD/CAM software
+    exportDXF() {
+        const text = document.getElementById('text-input').value;
+        let outputSize = parseFloat(document.getElementById('output-size').value);
+        const charSpacing = parseFloat(document.getElementById('char-spacing').value);
+        const spaceWidth = parseFloat(document.getElementById('space-width').value);
+        const lineGap = parseFloat(document.getElementById('line-spacing').value);
+        const maxWidth = parseFloat(document.getElementById('max-width').value);
+        const maxHeight = parseFloat(document.getElementById('max-height').value);
+        const autoFit = document.getElementById('auto-fit').checked;
+        
+        if (!text) {
+            alert('Please enter text to export');
+            return;
+        }
+
+        // Use consistent scaling
+        const referenceHeight = this.canvas.height;
+        let scale = outputSize / referenceHeight;
+        
+        // Calculate actual maximum character height in the font (in canvas coordinates)
+        let maxCharHeight = 0;
+        for (const char in this.font) {
+            const charData = this.font[char];
+            if (charData && charData.bounds) {
+                maxCharHeight = Math.max(maxCharHeight, charData.bounds.height);
+            }
+        }
+        
+        // If no characters have height, fall back to reference height
+        if (maxCharHeight === 0) maxCharHeight = referenceHeight;
+        
+        // Line spacing based on actual character height, not reference canvas height
+        let actualCharHeightMM = maxCharHeight * scale;
+        let lineSpacing = actualCharHeightMM + lineGap;
+
+        // Calculate text dimensions (same wrapping logic)
+        const inputLines = text.split('\n');
+        let wrappedLines = [];
+        
+        if (maxWidth > 0) {
+            inputLines.forEach(inputLine => {
+                const words = inputLine.split(' ');
+                let currentLine = '';
+                let currentWidth = 0;
+                
+                words.forEach((word) => {
+                    let wordWidth = 0;
+                    for (let i = 0; i < word.length; i++) {
+                        const char = word[i];
+                        const charData = this.font[char];
+                        if (charData) {
+                            const bounds = charData.bounds;
+                            wordWidth += bounds.width * scale + charSpacing;
+                        } else {
+                            wordWidth += outputSize * 0.5 + charSpacing;
+                        }
+                    }
+                    
+                    const spaceWidthTotal = spaceWidth + charSpacing;
+                    
+                    if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
+                        wrappedLines.push(currentLine);
+                        currentLine = word;
+                        currentWidth = wordWidth;
+                    } else {
+                        if (currentLine.length > 0) {
+                            currentLine += ' ' + word;
+                            currentWidth += spaceWidthTotal + wordWidth;
+                        } else {
+                            currentLine = word;
+                            currentWidth = wordWidth;
+                        }
+                    }
+                });
+                
+                wrappedLines.push(currentLine);
+            });
+        } else {
+            wrappedLines.push(...inputLines);
+        }
+
+        // Auto-fit logic
+        if (autoFit && (maxWidth > 0 || maxHeight > 0)) {
+            const maxTextSize = parseFloat(document.getElementById('max-text-size').value);
+            
+            const calculateDimensions = (testSize) => {
+                const testScale = testSize / referenceHeight;
+                const testLineSpacing = testSize + lineGap;
+                
+                const testWrappedLines = [];
+                if (maxWidth > 0) {
+                    inputLines.forEach(inputLine => {
+                        const words = inputLine.split(' ');
+                        let currentLine = '';
+                        let currentWidth = 0;
+                        
+                        words.forEach((word) => {
+                            let wordWidth = 0;
+                            for (let i = 0; i < word.length; i++) {
+                                const char = word[i];
+                                const charData = this.font[char];
+                                if (charData) {
+                                    const bounds = charData.bounds;
+                                    wordWidth += bounds.width * testScale + charSpacing;
+                                } else {
+                                    wordWidth += testSize * 0.5 + charSpacing;
+                                }
+                            }
+                            
+                            const spaceWidthTotal = spaceWidth + charSpacing;
+                            
+                            if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
+                                testWrappedLines.push(currentLine);
+                                currentLine = word;
+                                currentWidth = wordWidth;
+                            } else {
+                                if (currentLine.length > 0) {
+                                    currentLine += ' ' + word;
+                                    currentWidth += spaceWidthTotal + wordWidth;
+                                } else {
+                                    currentLine = word;
+                                    currentWidth = wordWidth;
+                                }
+                            }
+                        });
+                        
+                        testWrappedLines.push(currentLine);
+                    });
+                } else {
+                    testWrappedLines.push(...inputLines);
+                }
+                
+                let maxLineWidth = 0;
+                testWrappedLines.forEach(line => {
+                    let lineWidth = 0;
+                    for (let i = 0; i < line.length; i++) {
+                        const char = line[i];
+                        const charData = this.font[char];
+                        if (charData) {
+                            lineWidth += charData.bounds.width * testScale + charSpacing;
+                        } else {
+                            lineWidth += (char === ' ' ? spaceWidth : testSize * 0.5) + charSpacing;
+                        }
+                    }
+                    maxLineWidth = Math.max(maxLineWidth, lineWidth);
+                });
+                
+                const testActualCharHeightMM = maxCharHeight * testScale;
+                let totalHeight = testActualCharHeightMM;
+                for (let i = 1; i < testWrappedLines.length; i++) {
+                    totalHeight += testWrappedLines[i].length === 0 ? testActualCharHeightMM * 0.5 : testLineSpacing;
+                }
+                
+                return { width: maxLineWidth, height: totalHeight, wrappedLines: testWrappedLines };
+            };
+            
+            let bestSize = outputSize;
+            let bestWrappedLines = wrappedLines;
+            
+            for (let testSize = outputSize; testSize <= maxTextSize; testSize += 0.5) {
+                const dims = calculateDimensions(testSize);
+                const fitsWidth = maxWidth <= 0 || dims.width <= maxWidth;
+                const fitsHeight = maxHeight <= 0 || dims.height <= maxHeight;
+                
+                if (fitsWidth && fitsHeight) {
+                    bestSize = testSize;
+                    bestWrappedLines = dims.wrappedLines;
+                } else {
+                    break;
+                }
+            }
+            
+            outputSize = bestSize;
+            wrappedLines = bestWrappedLines;
+            scale = outputSize / referenceHeight;
+            actualCharHeightMM = maxCharHeight * scale;
+            lineSpacing = actualCharHeightMM + lineGap;
+        }
+
+        // Calculate total height for Y-axis flipping
+        // Recalculate in case scale changed without auto-fit
+        actualCharHeightMM = maxCharHeight * scale;
+        let totalHeight = actualCharHeightMM;
+        for (let i = 1; i < wrappedLines.length; i++) {
+            totalHeight += wrappedLines[i].length === 0 ? actualCharHeightMM * 0.5 : lineSpacing;
+        }
+
+        // Build DXF file
+        let dxf = '';
+        
+        // DXF Header
+        dxf += '0\nSECTION\n';
+        dxf += '2\nHEADER\n';
+        dxf += '9\n$INSUNITS\n70\n4\n'; // Units: 4 = mm
+        dxf += '0\nENDSEC\n';
+        
+        // DXF Entities
+        dxf += '0\nSECTION\n';
+        dxf += '2\nENTITIES\n';
+
+        let currentY = 0;
+        let handleCounter = 100; // DXF handle counter
+
+        wrappedLines.forEach((line) => {
+            let currentX = 0;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const charData = this.font[char];
+
+                if (!charData) {
+                    currentX += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
+                    continue;
+                }
+
+                const bounds = charData.bounds;
+                charData.strokes.forEach(stroke => {
+                    if (stroke.length < 2) return;
+                    
+                    // Use LWPOLYLINE for efficiency
+                    dxf += '0\nLWPOLYLINE\n';
+                    dxf += `5\n${(handleCounter++).toString(16).toUpperCase()}\n`; // Handle
+                    dxf += '100\nAcDbEntity\n';
+                    dxf += '8\n0\n'; // Layer 0
+                    dxf += '100\nAcDbPolyline\n';
+                    dxf += `90\n${stroke.length}\n`; // Vertex count
+                    dxf += '70\n0\n'; // Open polyline
+                    
+                    stroke.forEach(point => {
+                        const x = (point.x - bounds.minX) * scale + currentX;
+                        // Flip Y coordinate: DXF Y-axis points up, canvas Y-axis points down
+                        const y = totalHeight - (point.y * scale + currentY);
+                        dxf += `10\n${x.toFixed(4)}\n`; // X coordinate
+                        dxf += `20\n${y.toFixed(4)}\n`; // Y coordinate
+                    });
+                });
+
+                currentX += bounds.width * scale + charSpacing;
+            }
+
+            const lineAdvance = line.length === 0 ? outputSize * 0.5 : lineSpacing;
+            currentY += lineAdvance;
+        });
+
+        // DXF Footer
+        dxf += '0\nENDSEC\n';
+        dxf += '0\nEOF\n';
+
+        // Download DXF
+        const blob = new Blob([dxf], { type: 'application/dxf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const fontName = document.getElementById('font-name').value.replace(/\s+/g, '_');
+        a.download = `${fontName}_text.dxf`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        this.updateStatus('DXF exported!');
+    }
+
     // Download generated GCode as file
     downloadGCode() {
         if (!this.generatedGCode) {
@@ -1688,6 +2495,116 @@ class FontCreatorController {
         a.download = 'font_output.gcode';
         a.click();
         URL.revokeObjectURL(url);
+    }
+
+    // Export font as SVG Font format (for use in Inkscape, Safari, etc.)
+    exportSVGFont() {
+        if (Object.keys(this.font).length === 0) {
+            alert('No characters in font. Please draw some characters first.');
+            return;
+        }
+
+        const fontName = document.getElementById('font-name').value || 'CustomFont';
+        const fontId = fontName.replace(/\s+/g, '_').toLowerCase();
+        
+        // SVG fonts use units-per-em coordinate system (typically 1000)
+        const unitsPerEm = 1000;
+        const ascent = 800;  // Typical ascent
+        const descent = -200; // Typical descent
+        
+        // Calculate scale from canvas coordinates to font units
+        const canvasHeight = this.canvas.height;
+        const scale = unitsPerEm / canvasHeight;
+        
+        // Add spacing between characters (as percentage of em)
+        const sideBearings = unitsPerEm * 0.1; // 10% spacing on each side
+        
+        // Calculate average character width for default horiz-adv-x
+        let totalWidth = 0;
+        let charCount = 0;
+        for (const char in this.font) {
+            const charData = this.font[char];
+            if (charData && charData.bounds) {
+                totalWidth += charData.bounds.width * scale + sideBearings;
+                charCount++;
+            }
+        }
+        const avgWidth = charCount > 0 ? Math.round(totalWidth / charCount) : 500;
+        
+        // Build SVG font
+        let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+        svg += `<svg xmlns="http://www.w3.org/2000/svg">\n`;
+        svg += `  <defs>\n`;
+        svg += `    <font id="${fontId}" horiz-adv-x="${avgWidth}">\n`;
+        svg += `      <font-face font-family="${fontName}" units-per-em="${unitsPerEm}" ascent="${ascent}" descent="${descent}"/>\n`;
+        svg += `      <missing-glyph horiz-adv-x="500"/>\n`;
+        
+        // Add each character as a glyph
+        for (const char in this.font) {
+            const charData = this.font[char];
+            if (!charData || !charData.strokes || charData.strokes.length === 0) continue;
+            
+            const bounds = charData.bounds;
+            // Add side bearings (spacing) to character advance width
+            const horizAdvX = Math.round(bounds.width * scale + sideBearings);
+            
+            // Build path data for this glyph
+            let pathData = '';
+            charData.strokes.forEach(stroke => {
+                if (stroke.length < 2) return;
+                
+                // Convert first point
+                const firstPoint = stroke[0];
+                const x0 = (firstPoint.x - bounds.minX) * scale;
+                // Flip Y axis: SVG fonts use bottom-left origin, canvas uses top-left
+                const y0 = (canvasHeight - firstPoint.y) * scale;
+                pathData += `M ${x0.toFixed(1)} ${y0.toFixed(1)} `;
+                
+                // Convert remaining points
+                for (let i = 1; i < stroke.length; i++) {
+                    const x = (stroke[i].x - bounds.minX) * scale;
+                    const y = (canvasHeight - stroke[i].y) * scale;
+                    pathData += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
+                }
+            });
+            
+            // Escape special XML characters in unicode attribute
+            const unicodeAttr = char.replace(/&/g, '&amp;')
+                                    .replace(/</g, '&lt;')
+                                    .replace(/>/g, '&gt;')
+                                    .replace(/"/g, '&quot;')
+                                    .replace(/'/g, '&apos;');
+            
+            svg += `      <glyph unicode="${unicodeAttr}" horiz-adv-x="${horizAdvX}" d="${pathData.trim()}"/>\n`;
+        }
+        
+        // Add kerning pairs if any exist
+        if (Object.keys(this.kerning).length > 0) {
+            for (const pair in this.kerning) {
+                if (pair.length === 2) {
+                    const u1 = pair[0].replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+                    const u2 = pair[1].replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+                    // Kerning value needs to be scaled and negated (SVG font kerning convention)
+                    const kernValue = Math.round(-this.kerning[pair] * scale);
+                    svg += `      <hkern u1="${u1}" u2="${u2}" k="${kernValue}"/>\n`;
+                }
+            }
+        }
+        
+        svg += `    </font>\n`;
+        svg += `  </defs>\n`;
+        svg += `</svg>`;
+        
+        // Download SVG font file
+        const blob = new Blob([svg], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${fontName.replace(/\s+/g, '_')}.svg`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        this.updateStatus('SVG Font exported! Note: SVG fonts work in Safari, Inkscape, and Illustrator.');
     }
 
     // Toggle typography guide lines

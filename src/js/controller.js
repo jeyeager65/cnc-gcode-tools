@@ -296,16 +296,50 @@ class Controller {
             });
         }
         
-        // Layer filter
-        const layerMin = document.getElementById('layer-min');
-        const layerMax = document.getElementById('layer-max');
-        if (layerMin) {
-            layerMin.addEventListener('input', () => {
+        // Layer filter - dual range slider
+        const layerSliderMin = document.getElementById('layer-slider-min');
+        const layerSliderMax = document.getElementById('layer-slider-max');
+        const layerMinValue = document.getElementById('layer-min-value');
+        const layerMaxValue = document.getElementById('layer-max-value');
+        
+        if (layerSliderMin && layerSliderMax) {
+            // Initialize with default range (will be updated when file is loaded)
+            layerSliderMin.min = 0;
+            layerSliderMin.max = 100;
+            layerSliderMin.value = 0;
+            layerSliderMax.min = 0;
+            layerSliderMax.max = 100;
+            layerSliderMax.value = 100;
+            if (layerMinValue) layerMinValue.textContent = '0.0';
+            if (layerMaxValue) layerMaxValue.textContent = '100.0';
+            
+            // Update highlight bar
+            this.updateRangeHighlight();
+            
+            // Prevent sliders from crossing
+            layerSliderMin.addEventListener('input', () => {
+                const minVal = parseFloat(layerSliderMin.value);
+                const maxVal = parseFloat(layerSliderMax.value);
+                if (minVal > maxVal) {
+                    layerSliderMin.value = maxVal;
+                }
+                if (layerMinValue) {
+                    layerMinValue.textContent = layerSliderMin.value;
+                }
+                this.updateRangeHighlight();
                 this.updateLayerFilter();
             });
-        }
-        if (layerMax) {
-            layerMax.addEventListener('input', () => {
+            
+            layerSliderMax.addEventListener('input', () => {
+                const minVal = parseFloat(layerSliderMin.value);
+                const maxVal = parseFloat(layerSliderMax.value);
+                if (maxVal < minVal) {
+                    layerSliderMax.value = minVal;
+                }
+                if (layerMaxValue) {
+                    layerMaxValue.textContent = layerSliderMax.value;
+                }
+                this.updateRangeHighlight();
                 this.updateLayerFilter();
             });
         }
@@ -671,6 +705,7 @@ class Controller {
             this.updateStatistics();
             this.displayGCode(text);
             this.updateToolPanel();
+            this.initializeLayerSliders(); // Initialize layer filter sliders
             const gcodePanel = document.getElementById('gcode-panel');
             gcodePanel.style.visibility = 'visible';
             gcodePanel.style.position = 'static';
@@ -1220,17 +1255,76 @@ class Controller {
     }
 
     /**
+     * Update range highlight bar position
+     */
+    updateRangeHighlight() {
+        const minSlider = document.getElementById('layer-slider-min');
+        const maxSlider = document.getElementById('layer-slider-max');
+        const highlight = document.getElementById('layer-range-highlight');
+        
+        if (!minSlider || !maxSlider || !highlight) return;
+        
+        const min = parseFloat(minSlider.min);
+        const max = parseFloat(minSlider.max);
+        const minVal = parseFloat(minSlider.value);
+        const maxVal = parseFloat(maxSlider.value);
+        
+        // Calculate percentage positions
+        const minPercent = ((minVal - min) / (max - min)) * 100;
+        const maxPercent = ((maxVal - min) / (max - min)) * 100;
+        
+        // Update highlight position and width
+        highlight.style.left = minPercent + '%';
+        highlight.style.width = (maxPercent - minPercent) + '%';
+    }
+
+    /**
      * Update layer filter
      */
     updateLayerFilter() {
-        const minInput = document.getElementById('layer-min');
-        const maxInput = document.getElementById('layer-max');
+        const minSlider = document.getElementById('layer-slider-min');
+        const maxSlider = document.getElementById('layer-slider-max');
         
-        const min = minInput.value ? parseFloat(minInput.value) : -Infinity;
-        const max = maxInput.value ? parseFloat(maxInput.value) : Infinity;
+        // Use slider values if available
+        const min = minSlider ? parseFloat(minSlider.value) : -Infinity;
+        const max = maxSlider ? parseFloat(maxSlider.value) : Infinity;
         
         this.renderer2d.setLayerFilter(min, max);
         this.renderer3d.setLayerFilter(min, max);
+    }
+    
+    /**
+     * Initialize layer filter sliders with bounds from loaded file
+     */
+    initializeLayerSliders() {
+        if (!this.bounds) return;
+        
+        const minSlider = document.getElementById('layer-slider-min');
+        const maxSlider = document.getElementById('layer-slider-max');
+        const minValue = document.getElementById('layer-min-value');
+        const maxValue = document.getElementById('layer-max-value');
+        
+        if (!minSlider || !maxSlider) return;
+        
+        // Round to 0.1 precision
+        const minZ = Math.floor(this.bounds.minZ * 10) / 10;
+        const maxZ = Math.ceil(this.bounds.maxZ * 10) / 10;
+        
+        // Set slider ranges
+        minSlider.min = minZ;
+        minSlider.max = maxZ;
+        minSlider.value = minZ;
+        
+        maxSlider.min = minZ;
+        maxSlider.max = maxZ;
+        maxSlider.value = maxZ;
+        
+        // Update display values
+        if (minValue) minValue.textContent = minZ.toFixed(1);
+        if (maxValue) maxValue.textContent = maxZ.toFixed(1);
+        
+        // Update highlight bar
+        this.updateRangeHighlight();
     }
 
     /**

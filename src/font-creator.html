@@ -32,9 +32,11 @@
             <button id="save-font" class="primary" style="padding: 8px 16px; white-space: nowrap;">💾 Save</button>
             <button id="preview-font" style="padding: 8px 16px; white-space: nowrap;">👁️ Preview</button>
             <button id="delete-font" style="padding: 8px 16px; white-space: nowrap; color: #d32f2f;">🗑️ Delete</button>
-            <button id="import-font-btn" style="padding: 8px 16px; white-space: nowrap;">📥 Import</button>
+            <button id="import-font-btn" style="padding: 8px 16px; white-space: nowrap;">📥 Import JSON</button>
+            <button id="import-svg-font-btn" style="padding: 8px 16px; white-space: nowrap;">📥 Import SVG Font</button>
             <button id="export-font" style="padding: 8px 16px; white-space: nowrap;">📤 Export</button>
             <input type="file" id="import-font" accept=".json" style="display: none;" />
+            <input type="file" id="import-svg-font" accept=".svg" style="display: none;" />
         </div>
         <div class="main-container">
             <aside class="left-panel">
@@ -264,7 +266,10 @@
                 <div class="panel">
                     <h3>Export</h3>
                     <button id="download-gcode" style="width: 100%; font-size: 14px; padding: 10px; margin-bottom: 8px;">💾 Download GCode</button>
-                    <button id="export-image" style="width: 100%; font-size: 14px; padding: 10px;">🖼️ Export Image</button>
+                    <button id="export-image" style="width: 100%; font-size: 14px; padding: 10px; margin-bottom: 8px;">🖼️ Export Image</button>
+                    <button id="export-svg" style="width: 100%; font-size: 14px; padding: 10px; margin-bottom: 8px;">📐 Export SVG</button>
+                    <button id="export-dxf" style="width: 100%; font-size: 14px; padding: 10px; margin-bottom: 8px;">📏 Export DXF</button>
+                    <button id="export-svg-font" style="width: 100%; font-size: 14px; padding: 10px;">🔤 Export SVG Font</button>
                 </div>
 
                 <div class="panel">

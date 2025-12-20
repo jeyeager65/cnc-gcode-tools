@@ -52,10 +52,6 @@ class FluidNCAPI {
 
         // Process messages for this extension or non-specific messages
         if (!eventMsg.data.id || eventMsg.data.id === this.extensionName || eventMsg.data.id === this.extensionName + 'Setting') {
-            if (this.debug) {
-                console.log('[FluidNC API] Received message:', eventMsg.data);
-            }
-
             const { type, content } = eventMsg.data;
 
             // Handle command responses (type: 'cmd' or 'stream' with successful response)
@@ -501,15 +497,56 @@ class FluidNCAPI {
 
     /**
      * Run GCode file from SD card
+     * @param {string} filepath - Path to file on SD card
+     * @param {Function} onProgress - Optional callback for progress updates (0-100)
      */
-    async runSDFile(filepath) {
+    async runSDFile(filepath, onProgress = null) {
         try {
+            // Listen for progress updates if callback provided
+            if (onProgress) {
+                const progressHandler = (content) => {
+                    // Parse stream message for SD card progress
+                    // Format: <Run|MPos:X,Y,Z|FS:feed,speed|SD:percent,filename>
+                    if (typeof content === 'string' && content.includes('SD:')) {
+                        const sdMatch = content.match(/SD:([\d.]+),(.+)>/);
+                        if (sdMatch) {
+                            const percent = parseFloat(sdMatch[1]);
+                            const filename = sdMatch[2].trim();
+                            
+                            // FluidNC prefixes with /sd/ when reporting, so normalize both paths
+                            const normalizedReported = filename.replace(/^\/sd/, '');
+                            const normalizedExpected = filepath.replace(/^\/sd/, '');
+                            
+                            // Only call progress callback if filename matches the file we're running
+                            // This filters out M6 macro files and other sub-processes
+                            if (normalizedReported === normalizedExpected) {
+                                onProgress(percent);
+                            }
+                        }
+                    }
+                };
+                this.on('stream', progressHandler);
+                
+                // Store handler for cleanup
+                this._runProgressHandler = progressHandler;
+            }
+            
             // Send run command without waiting for completion (job could take hours)
             this.sendCommandNoWait(`$SD/Run=${filepath}`);
             return true;
         } catch (error) {
             console.error('[FluidNC API] Failed to run SD file:', error);
             throw error;
+        }
+    }
+    
+    /**
+     * Stop monitoring run progress
+     */
+    stopRunProgress() {
+        if (this._runProgressHandler) {
+            this.off('stream', this._runProgressHandler);
+            this._runProgressHandler = null;
         }
     }
 }

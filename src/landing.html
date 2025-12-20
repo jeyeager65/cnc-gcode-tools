@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CNC GCode Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        h1 {
+            color: white;
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            color: rgba(255,255,255,0.9);
+            font-size: 1.2em;
+            font-weight: 300;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
+
+        .card-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .card-title {
+            font-size: 1.5em;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .card-description {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .card-features {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+
+        .card-features li {
+            color: #555;
+            font-size: 0.9em;
+            padding: 5px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .card-features li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #3498db;
+            font-weight: bold;
+        }
+
+        .card-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .card-button:hover {
+            opacity: 0.9;
+        }
+
+        footer {
+            text-align: center;
+            color: rgba(255,255,255,0.8);
+            margin-top: 40px;
+        }
+
+        footer a {
+            color: white;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .warning {
+            background: rgba(255, 193, 7, 0.2);
+            border: 2px solid rgba(255, 193, 7, 0.8);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 30px;
+            color: rgba(255,255,255,0.95);
+            text-align: center;
+        }
+
+        .warning-icon {
+            font-size: 1.5em;
+            margin-right: 8px;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2em;
+            }
+
+            .subtitle {
+                font-size: 1em;
+            }
+
+            .cards {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔧 CNC GCode Viewer</h1>
+            <p class="subtitle">Lightweight, zero-dependency GCode visualization and font creation tools</p>
+        </header>
+
+        <div class="warning">
+            <span class="warning-icon">⚠️</span>
+            <strong>Under Development:</strong> This project is still in active development. Some features may not work as expected or may change.
+        </div>
+
+        <div class="cards">
+            <a href="standalone.html" class="card">
+                <span class="card-icon">📊</span>
+                <h2 class="card-title">GCode Viewer</h2>
+                <p class="card-description">Visualize CNC toolpaths with 2D/3D views and animation</p>
+                <ul class="card-features">
+                    <li>2D & 3D visualization</li>
+                    <li>Multi-tool support</li>
+                    <li>Layer-by-layer animation</li>
+                    <li>Completely offline</li>
+                </ul>
+                <span class="card-button">Open Viewer →</span>
+            </a>
+
+            <a href="fontcreator.html" class="card">
+                <span class="card-icon">✍️</span>
+                <h2 class="card-title">Font Creator</h2>
+                <p class="card-description">Create custom fonts for CNC engraving and laser cutting</p>
+                <ul class="card-features">
+                    <li>Draw characters by hand</li>
+                    <li>Export to GCode, SVG, DXF</li>
+                    <li>Kerning support</li>
+                    <li>Text-to-GCode converter</li>
+                </ul>
+                <span class="card-button">Create Font →</span>
+            </a>
+
+            <a href="gcodeviewer.html.gz" download class="card">
+                <span class="card-icon">🔌</span>
+                <h2 class="card-title">FluidNC Extension</h2>
+                <p class="card-description">Embedded version for FluidNC WebUI v3 with SD card browser</p>
+                <ul class="card-features">
+                    <li>SD card file browser</li>
+                    <li>Direct device integration</li>
+                    <li>Optimized for ESP32</li>
+                    <li>Under 30KB gzipped</li>
+                </ul>
+                <span class="card-button">Download (.gz) →</span>
+            </a>
+        </div>
+
+        <footer>
+            <p>
+                <a href="https://github.com/jeyeager65/cnc-gcode-viewer" target="_blank">📦 GitHub Repository</a>
+                &nbsp;•&nbsp;
+                <a href="https://github.com/jeyeager65/cnc-gcode-viewer/releases" target="_blank">📥 Download</a>
+                &nbsp;•&nbsp;
+                <a href="https://github.com/jeyeager65/cnc-gcode-viewer/blob/main/LICENSE" target="_blank">📄 MIT License</a>
+            </p>
+            <p style="margin-top: 10px; font-size: 0.9em;">
+                🔒 All processing happens locally in your browser. No data is transmitted.
+            </p>
+        </footer>
+    </div>
+</body>
+</html>
