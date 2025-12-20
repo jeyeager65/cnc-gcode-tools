@@ -1,7 +1,7 @@
-# CNC GCode Viewer
+# CNC GCode Tools
 
-![Version](https://img.shields.io/github/v/release/jeyeager65/cnc-gcode-viewer?style=flat-square)
-![License](https://img.shields.io/github/license/jeyeager65/cnc-gcode-viewer?style=flat-square)
+![Version](https://img.shields.io/github/v/release/jeyeager65/cnc-gcode-tools?style=flat-square)
+![License](https://img.shields.io/github/license/jeyeager65/cnc-gcode-tools?style=flat-square)
 ![Size](https://img.shields.io/badge/size-~18--21KB%20gzipped-blue?style=flat-square)
 
 A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL CNC machines. Features both 2D and 3D visualization modes, layer-by-layer animation, multi-tool support, and runs entirely client-side on embedded devices with limited storage.
@@ -32,10 +32,10 @@ A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL C
 ## 🚀 Quick Start
 
 ### Hosted Version
-Visit the hosted version: [CNC GCode Viewer](https://jeyeager65.github.io/cnc-gcode-viewer/)
+Visit the hosted version: [CNC GCode Tools](https://jeyeager65.github.io/cnc-gcode-tools/)
 
 ### Local Usage
-1. Download `standalone.html` from the [latest release](https://github.com/jeyeager65/cnc-gcode-viewer/releases/latest)
+1. Download `standalone.html` from the [latest release](https://github.com/jeyeager65/cnc-gcode-tools/releases/latest)
 2. Open directly in any modern browser (Chrome, Edge, Firefox, Safari)
 3. Drag and drop your GCode file or use the file picker
 
@@ -271,7 +271,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📧 Contact
 
-- **Issues**: [GitHub Issues](https://github.com/jeyeager65/cnc-gcode-viewer/issues)
+- **Issues**: [GitHub Issues](https://github.com/jeyeager65/cnc-gcode-tools/issues)
 
 ---
 

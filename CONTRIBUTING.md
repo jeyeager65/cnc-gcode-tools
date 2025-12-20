@@ -402,9 +402,9 @@ Releases are automated via GitHub Actions:
 
 ## 🤝 Questions?
 
-- **General questions**: [GitHub Discussions](https://github.com/jeyeager65/cnc-gcode-viewer/discussions)
-- **Bug reports**: [GitHub Issues](https://github.com/jeyeager65/cnc-gcode-viewer/issues)
-- **Feature requests**: [GitHub Issues](https://github.com/jeyeager65/cnc-gcode-viewer/issues)
+- **General questions**: [GitHub Discussions](https://github.com/jeyeager65/cnc-gcode-tools/discussions)
+- **Bug reports**: [GitHub Issues](https://github.com/jeyeager65/cnc-gcode-tools/issues)
+- **Feature requests**: [GitHub Issues](https://github.com/jeyeager65/cnc-gcode-tools/issues)
 
 ## 🙏 Thank You!
 
