@@ -5,11 +5,14 @@ class FontCreatorController {
         this.ctx = null;
         this.font = {}; // { 'A': { strokes: [...], bounds: {...} }, ... }
         this.kerning = {}; // { 'AV': -2, 'To': -1, ... }
+        this.fontMetrics = { unitsPerEm: 1000, ascent: 800, descent: -200, capHeight: 800, xHeight: 500 };
         this.currentChar = null;
         this.currentFontId = null; // ID of currently loaded font
         this.charArray = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789`~!@#$%^&*()-_=+[{]}\\|;:\'",<.>/? \u2018\u2019\u201C\u201D\u2014'.split('');
         this.strokes = []; // Current character strokes
         this.showGuides = true;
+        // Guide line positions (as percentage of canvas height, 0-100)
+        this.guidePositions = { ascent: 15, capHeight: 25, xHeight: 45, baseline: 75, descender: 85 };
         this.currentStroke = null;
         this.isDrawing = false;
         this.history = [];
@@ -175,6 +178,14 @@ class FontCreatorController {
         document.getElementById('import-svg-font').onchange = (e) => this.importSVGFont(e);
         document.getElementById('toggle-guides').onclick = () => this.toggleGuides();
         document.getElementById('add-kerning').onclick = () => this.addKerning();
+        
+        // Guide position inputs
+        document.getElementById('ascent-pos').oninput = (e) => this.updateGuidePosition('ascent', parseFloat(e.target.value));
+        document.getElementById('cap-height-pos').oninput = (e) => this.updateGuidePosition('capHeight', parseFloat(e.target.value));
+        document.getElementById('x-height-pos').oninput = (e) => this.updateGuidePosition('xHeight', parseFloat(e.target.value));
+        document.getElementById('baseline-pos').oninput = (e) => this.updateGuidePosition('baseline', parseFloat(e.target.value));
+        document.getElementById('descender-pos').oninput = (e) => this.updateGuidePosition('descender', parseFloat(e.target.value));
+        document.getElementById('reset-guides').onclick = () => this.resetGuidePositions();
         
         // Preview modal
         document.getElementById('close-preview').onclick = () => {
@@ -349,12 +360,19 @@ class FontCreatorController {
         
         for (let endIdx = maxPoints - 1; endIdx > startIdx + 2; endIdx--) {
             const points = stroke.slice(startIdx, endIdx + 1);
+            
+            // Check if points are collinear (straight line) before attempting arc fit
+            if (this.isCollinear(points, arcTolerance)) {
+                continue; // Skip arc fitting for straight lines
+            }
+            
             const circle = this.fitCircle(points);
             
             if (!circle) continue;
             
             // Validate radius is reasonable (not too large or too small)
-            if (circle.r < 0.5 || circle.r > 500) continue;
+            // Large radii indicate nearly straight lines, which should not be arcs
+            if (circle.r < 0.5 || circle.r > 50) continue;
             
             // Check if all points fit the circle within tolerance
             let allFit = true;
@@ -430,6 +448,31 @@ class FontCreatorController {
         const r = sumR / n;
         
         return { cx, cy, r };
+    }
+
+    // Check if points are collinear (form a straight line)
+    isCollinear(points, tolerance) {
+        if (points.length < 3) return true;
+        
+        const start = points[0];
+        const end = points[points.length - 1];
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const lineLength = Math.sqrt(dx * dx + dy * dy);
+        
+        if (lineLength < 0.1) return true; // Points too close together
+        
+        // Check if all intermediate points are close to the line
+        for (let i = 1; i < points.length - 1; i++) {
+            const pt = points[i];
+            // Calculate perpendicular distance from point to line
+            const distance = Math.abs((dy * pt.x - dx * pt.y + end.x * start.y - end.y * start.x) / lineLength);
+            if (distance > tolerance) {
+                return false; // Point is too far from the line
+            }
+        }
+        
+        return true; // All points are close to the line
     }
 
     // Determine if arc is clockwise or counterclockwise
@@ -563,50 +606,62 @@ class FontCreatorController {
         
         // Draw guide lines if enabled
         if (this.showGuides) {
-            const baselineY = this.canvas.height * 0.75;
-            const capHeightY = this.canvas.height * 0.25;
-            const xHeightY = this.canvas.height * 0.45;
-            const descenderY = this.canvas.height * 0.85;
+            const ascentY = this.canvas.height * (this.guidePositions.ascent / 100);
+            const capHeightY = this.canvas.height * (this.guidePositions.capHeight / 100);
+            const xHeightY = this.canvas.height * (this.guidePositions.xHeight / 100);
+            const baselineY = this.canvas.height * (this.guidePositions.baseline / 100);
+            const descenderY = this.canvas.height * (this.guidePositions.descender / 100);
             
-            // Baseline (red)
-            this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
-            this.ctx.lineWidth = 2;
             this.ctx.setLineDash([5, 5]);
+            this.ctx.lineWidth = 2;
+            this.ctx.font = '12px sans-serif';
+            
+            // Ascent (purple)
+            this.ctx.strokeStyle = 'rgba(128, 0, 128, 0.5)';
+            this.ctx.fillStyle = 'rgba(128, 0, 128, 0.7)';
             this.ctx.beginPath();
-            this.ctx.moveTo(0, baselineY);
-            this.ctx.lineTo(this.canvas.width, baselineY);
+            this.ctx.moveTo(0, ascentY);
+            this.ctx.lineTo(this.canvas.width, ascentY);
             this.ctx.stroke();
+            this.ctx.fillText('Ascent', 5, ascentY - 5);
             
             // Cap height (blue)
             this.ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
+            this.ctx.fillStyle = 'rgba(0, 0, 255, 0.7)';
             this.ctx.beginPath();
             this.ctx.moveTo(0, capHeightY);
             this.ctx.lineTo(this.canvas.width, capHeightY);
             this.ctx.stroke();
+            this.ctx.fillText('Cap', 5, capHeightY - 5);
             
             // X-height (green)
             this.ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+            this.ctx.fillStyle = 'rgba(0, 255, 0, 0.7)';
             this.ctx.beginPath();
             this.ctx.moveTo(0, xHeightY);
             this.ctx.lineTo(this.canvas.width, xHeightY);
             this.ctx.stroke();
+            this.ctx.fillText('x-height', 5, xHeightY - 5);
+            
+            // Baseline (red)
+            this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+            this.ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, baselineY);
+            this.ctx.lineTo(this.canvas.width, baselineY);
+            this.ctx.stroke();
+            this.ctx.fillText('Baseline', 5, baselineY + 15);
             
             // Descender (orange)
             this.ctx.strokeStyle = 'rgba(255, 165, 0, 0.5)';
+            this.ctx.fillStyle = 'rgba(255, 165, 0, 0.7)';
             this.ctx.beginPath();
             this.ctx.moveTo(0, descenderY);
             this.ctx.lineTo(this.canvas.width, descenderY);
             this.ctx.stroke();
+            this.ctx.fillText('Descender', 5, descenderY + 15);
             
             this.ctx.setLineDash([]);
-            
-            // Labels
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            this.ctx.font = 'bold 14px sans-serif';
-            this.ctx.fillText('Cap', 5, capHeightY - 5);
-            this.ctx.fillText('X-height', 5, xHeightY - 5);
-            this.ctx.fillText('Baseline', 5, baselineY - 5);
-            this.ctx.fillText('Descender', 5, descenderY + 15);
         }
 
         // Draw strokes
@@ -1099,18 +1154,20 @@ class FontCreatorController {
                     if (!unicode || unicode.length === 0) return;
                     
                     const pathData = glyph.getAttribute('d');
-                    if (!pathData) return;
                     
-                    // Convert SVG path to strokes
-                    const strokes = this.parseSVGPath(pathData, scale, canvasHeight);
-                    if (strokes.length === 0) return;
+                    // Get horizontal advance (spacing to next character)
+                    const horizAdvX = parseFloat(glyph.getAttribute('horiz-adv-x') || fontElement.getAttribute('horiz-adv-x') || '1000');
                     
-                    // Calculate bounds for this character
-                    const bounds = this.calculateBounds(strokes);
+                    // Convert SVG path to strokes (may be empty for space character)
+                    const strokes = pathData ? this.parseSVGPath(pathData, scale, canvasHeight) : [];
+                    
+                    // Calculate bounds for this character (will be zero-size for space)
+                    const bounds = strokes.length > 0 ? this.calculateBounds(strokes) : { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0 };
                     
                     importedFont[unicode] = {
                         strokes: strokes,
-                        bounds: bounds
+                        bounds: bounds,
+                        horizAdvX: horizAdvX * scale // Store in scaled canvas units
                     };
                     glyphCount++;
                 });
@@ -1649,7 +1706,10 @@ class FontCreatorController {
                     }
                 }
                 
-                currentX += bounds.width * scale + spacing;
+                // Use horizontal advance if available (from SVG font), otherwise use visual width
+                // horizAdvX is stored in canvas units, so we need to scale it to output size
+                const charWidth = charData.horizAdvX !== undefined ? charData.horizAdvX * scale : bounds.width * scale;
+                currentX += charWidth + spacing;
             }
 
             // Use smaller spacing for blank lines (baseline to cap height = 50% of output size)
@@ -2611,6 +2671,28 @@ class FontCreatorController {
     toggleGuides() {
         this.showGuides = !this.showGuides;
         this.render();
+    }
+
+    // Update guide line position
+    updateGuidePosition(guide, value) {
+        this.guidePositions[guide] = value;
+        this.render();
+    }
+
+    // Reset guide positions to defaults
+    resetGuidePositions() {
+        this.guidePositions = { ascent: 15, capHeight: 25, xHeight: 45, baseline: 75, descender: 85 };
+        this.updateGuidePositionInputs();
+        this.render();
+    }
+
+    // Update guide position input values (called when loading font)
+    updateGuidePositionInputs() {
+        document.getElementById('ascent-pos').value = this.guidePositions.ascent;
+        document.getElementById('cap-height-pos').value = this.guidePositions.capHeight;
+        document.getElementById('x-height-pos').value = this.guidePositions.xHeight;
+        document.getElementById('baseline-pos').value = this.guidePositions.baseline;
+        document.getElementById('descender-pos').value = this.guidePositions.descender;
     }
 
     // Add kerning pair

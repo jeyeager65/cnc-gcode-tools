@@ -63,6 +63,49 @@
                         </label>
                         <input type="number" id="arc-tolerance" value="0.1" step="0.01" min="0.01" />
                     </div>
+                    <hr style="margin: 15px 0; border: none; border-top: 1px solid var(--border-color);">
+                    <h4 style="margin: 10px 0 10px 0; font-size: 14px;">Guide Line Positions (%)</h4>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            Ascent
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Position of top of tall letters like 'h', 'k', 'l' (0-100%, from top). Maps to SVG ascent value.</span>
+                        </label>
+                        <input type="number" id="ascent-pos" value="15" step="1" min="0" max="100" />
+                    </div>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            Cap Height
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Position of top of capital letters (0-100%, from top of canvas). Maps to SVG cap-height value.</span>
+                        </label>
+                        <input type="number" id="cap-height-pos" value="25" step="1" min="0" max="100" />
+                    </div>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            X-Height
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Position of top of lowercase letters like 'x' (0-100%, from top). Maps to SVG x-height value.</span>
+                        </label>
+                        <input type="number" id="x-height-pos" value="45" step="1" min="0" max="100" />
+                    </div>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            Baseline
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Position where letters sit (0-100%, from top). Baseline = 0 in SVG coordinates.</span>
+                        </label>
+                        <input type="number" id="baseline-pos" value="75" step="1" min="0" max="100" />
+                    </div>
+                    <div class="input-group">
+                        <label class="tooltip-label">
+                            Descender
+                            <span class="tooltip-icon">ℹ️</span>
+                            <span class="tooltip-text">Position of bottom of descenders like 'g', 'y' (0-100%, from top). Maps to SVG descent value.</span>
+                        </label>
+                        <input type="number" id="descender-pos" value="85" step="1" min="0" max="100" />
+                    </div>
+                    <button id="reset-guides" style="width: 100%; margin-top: 5px;">↺ Reset to Defaults</button>
                     </div>
                 </div>
 
