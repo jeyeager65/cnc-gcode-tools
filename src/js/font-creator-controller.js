@@ -388,9 +388,46 @@ class FontCreatorController {
             }
             
             if (allFit) {
+                // Calculate arc angle to reject corners that accidentally fit circles
+                const startPt = points[0];
+                const endPt = points[points.length - 1];
+                const angleStart = Math.atan2(startPt.y - circle.cy, startPt.x - circle.cx);
+                const angleEnd = Math.atan2(endPt.y - circle.cy, endPt.x - circle.cx);
+                let arcAngle = angleEnd - angleStart;
+                
+                // Normalize to [-PI, PI]
+                while (arcAngle > Math.PI) arcAngle -= 2 * Math.PI;
+                while (arcAngle < -Math.PI) arcAngle += 2 * Math.PI;
+                
+                const arcAngleDeg = Math.abs(arcAngle) * 180 / Math.PI;
+                
+                // Reject arcs that span less than 20 degrees - these are likely corners, not curves
+                if (arcAngleDeg < 20) {
+                    continue;
+                }
+                
+                // Calculate chord length (straight-line distance from start to end)
+                const dx = endPt.x - startPt.x;
+                const dy = endPt.y - startPt.y;
+                const chordLength = Math.sqrt(dx * dx + dy * dy);
+                
+                // Calculate arc length along the circle
+                const arcLength = circle.r * Math.abs(arcAngle);
+                
+                // For straight lines: arc length ≈ chord length (ratio ≈ 1.0)
+                // For curves: arc length > chord length (ratio > 1.0)
+                // Reject if ratio is too close to 1.0 (indicating nearly straight)
+                const arcToChordRatio = chordLength > 0 ? arcLength / chordLength : 0;
+                
+                // Require at least 5% difference between arc and chord length
+                // (ratio must be > 1.05 for a valid arc)
+                if (arcToChordRatio < 1.05) {
+                    continue;
+                }
+                
                 // Determine if clockwise or counterclockwise
                 const clockwise = this.isClockwise(points, circle);
-                console.log(`Arc fitted: radius=${circle.r.toFixed(2)}, maxError=${maxError.toFixed(3)}, CW=${clockwise}`);
+                console.log(`Arc fitted: radius=${circle.r.toFixed(2)}, angle=${arcAngleDeg.toFixed(1)}°, chord/arc=${arcToChordRatio.toFixed(3)}, maxError=${maxError.toFixed(3)}, CW=${clockwise}`);
                 return {
                     endIndex: endIdx,
                     center: { x: circle.cx, y: circle.cy },
@@ -469,6 +506,39 @@ class FontCreatorController {
             const distance = Math.abs((dy * pt.x - dx * pt.y + end.x * start.y - end.y * start.x) / lineLength);
             if (distance > tolerance) {
                 return false; // Point is too far from the line
+            }
+        }
+        
+        // Additional check: ensure points don't form multiple straight segments with different slopes
+        // (e.g., an "L" shape should not be considered collinear)
+        // Check if consecutive segments have consistent direction
+        for (let i = 0; i < points.length - 2; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[i + 2];
+            
+            const dx1 = p2.x - p1.x;
+            const dy1 = p2.y - p1.y;
+            const dx2 = p3.x - p2.x;
+            const dy2 = p3.y - p2.y;
+            
+            const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+            const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+            
+            // Skip if segments are too short
+            if (len1 < 0.1 || len2 < 0.1) continue;
+            
+            // Normalize direction vectors
+            const dir1x = dx1 / len1;
+            const dir1y = dy1 / len1;
+            const dir2x = dx2 / len2;
+            const dir2y = dy2 / len2;
+            
+            // Check if direction vectors are parallel (dot product close to 1 or -1)
+            const dotProduct = dir1x * dir2x + dir1y * dir2y;
+            // If dot product is less than 0.95, directions differ by more than ~18 degrees
+            if (Math.abs(dotProduct) < 0.95) {
+                return false; // Direction change indicates corner, not straight line
             }
         }
         
@@ -1140,9 +1210,42 @@ class FontCreatorController {
                 const unitsPerEm = parseFloat(fontFace?.getAttribute('units-per-em') || '1000');
                 const fontFamily = fontFace?.getAttribute('font-family') || 'Imported SVG Font';
                 
-                // Scale from font units to canvas coordinates
+                // Get font-face metrics for positioning
+                const ascent = parseFloat(fontFace?.getAttribute('ascent') || (unitsPerEm * 0.8));
+                const descent = parseFloat(fontFace?.getAttribute('descent') || (unitsPerEm * -0.2));
+                const capHeight = parseFloat(fontFace?.getAttribute('cap-height') || (unitsPerEm * 0.7));
+                const xHeight = parseFloat(fontFace?.getAttribute('x-height') || (unitsPerEm * 0.5));
+                
+                // Calculate guide positions based on font metrics
                 const canvasHeight = this.canvas.height;
-                const scale = canvasHeight / unitsPerEm;
+                const fontRange = ascent - descent; // Total vertical range of font
+                
+                // Position baseline at 75% of canvas height (default)
+                const baselinePos = this.guidePositions.baseline;
+                const baselineY = canvasHeight * (baselinePos / 100);
+                
+                // Calculate scale to fit font within available vertical space
+                const availableHeight = canvasHeight * 0.7; // Use 70% of canvas height
+                const baseScale = availableHeight / fontRange;
+                
+                // Calculate guide positions based on font metrics
+                this.guidePositions.baseline = 75;
+                this.guidePositions.ascent = 75 - (ascent * baseScale / canvasHeight * 100);
+                this.guidePositions.capHeight = 75 - (capHeight * baseScale / canvasHeight * 100);
+                this.guidePositions.xHeight = 75 - (xHeight * baseScale / canvasHeight * 100);
+                this.guidePositions.descender = 75 + (Math.abs(descent) * baseScale / canvasHeight * 100);
+                
+                // Update guide position inputs
+                this.updateGuidePositionInputs();
+                
+                // Store font metrics for reference
+                this.fontMetrics = {
+                    unitsPerEm: unitsPerEm,
+                    ascent: ascent,
+                    descent: descent,
+                    capHeight: capHeight,
+                    xHeight: xHeight
+                };
                 
                 // Parse glyphs
                 const glyphs = fontElement.querySelectorAll('glyph');
@@ -1159,7 +1262,9 @@ class FontCreatorController {
                     const horizAdvX = parseFloat(glyph.getAttribute('horiz-adv-x') || fontElement.getAttribute('horiz-adv-x') || '1000');
                     
                     // Convert SVG path to strokes (may be empty for space character)
-                    const strokes = pathData ? this.parseSVGPath(pathData, scale, canvasHeight) : [];
+                    // SVG font coordinate system: origin at baseline, Y+ up
+                    // Canvas coordinate system: origin at top-left, Y+ down
+                    const strokes = pathData ? this.parseSVGPath(pathData, baseScale, baselineY, ascent) : [];
                     
                     // Calculate bounds for this character (will be zero-size for space)
                     const bounds = strokes.length > 0 ? this.calculateBounds(strokes) : { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0 };
@@ -1167,7 +1272,7 @@ class FontCreatorController {
                     importedFont[unicode] = {
                         strokes: strokes,
                         bounds: bounds,
-                        horizAdvX: horizAdvX * scale // Store in scaled canvas units
+                        horizAdvX: horizAdvX * baseScale // Store in scaled canvas units
                     };
                     glyphCount++;
                 });
@@ -1189,6 +1294,9 @@ class FontCreatorController {
                     if (btn) btn.classList.add('defined');
                 });
                 
+                // Render with updated guides
+                this.render();
+                
                 this.saveToLocalStorage();
                 this.updateStatus(`SVG Font imported: ${fontFamily} (${glyphCount} characters)`);
                 
@@ -1200,11 +1308,20 @@ class FontCreatorController {
     }
     
     // Parse SVG path data and convert to strokes (supports M, L, Q commands)
-    parseSVGPath(pathData, scale, canvasHeight) {
+    // SVG font coordinates: origin at baseline, Y+ is up
+    // Canvas coordinates: origin at top-left, Y+ is down
+    parseSVGPath(pathData, scale, baselineY, ascent) {
         const strokes = [];
         let currentStroke = [];
         let currentX = 0, currentY = 0;
         let startX = 0, startY = 0;
+        
+        // Helper function to transform SVG font coords to canvas coords
+        const transformY = (svgY) => {
+            // SVG Y coordinate is relative to baseline (0), with positive up
+            // Transform to canvas: baseline is at baselineY, flip Y axis
+            return baselineY - (svgY * scale);
+        };
         
         // Parse path commands
         const commands = pathData.match(/[MmLlHhVvQqTtCcSsAaZz][^MmLlHhVvQqTtCcSsAaZz]*/g);
@@ -1226,7 +1343,7 @@ class FontCreatorController {
                     startY = currentY;
                     currentStroke.push({
                         x: currentX * scale,
-                        y: canvasHeight - (currentY * scale) // Flip Y axis
+                        y: transformY(currentY)
                     });
                     break;
                     
@@ -1241,7 +1358,7 @@ class FontCreatorController {
                     startY = currentY;
                     currentStroke.push({
                         x: currentX * scale,
-                        y: canvasHeight - (currentY * scale)
+                        y: transformY(currentY)
                     });
                     break;
                     
@@ -1251,7 +1368,7 @@ class FontCreatorController {
                         currentY = values[i + 1];
                         currentStroke.push({
                             x: currentX * scale,
-                            y: canvasHeight - (currentY * scale)
+                            y: transformY(currentY)
                         });
                     }
                     break;
@@ -1262,7 +1379,7 @@ class FontCreatorController {
                         currentY += values[i + 1];
                         currentStroke.push({
                             x: currentX * scale,
-                            y: canvasHeight - (currentY * scale)
+                            y: transformY(currentY)
                         });
                     }
                     break;
@@ -1272,7 +1389,7 @@ class FontCreatorController {
                         currentX = x;
                         currentStroke.push({
                             x: currentX * scale,
-                            y: canvasHeight - (currentY * scale)
+                            y: transformY(currentY)
                         });
                     });
                     break;
@@ -1282,7 +1399,7 @@ class FontCreatorController {
                         currentX += dx;
                         currentStroke.push({
                             x: currentX * scale,
-                            y: canvasHeight - (currentY * scale)
+                            y: transformY(currentY)
                         });
                     });
                     break;
@@ -1292,7 +1409,7 @@ class FontCreatorController {
                         currentY = y;
                         currentStroke.push({
                             x: currentX * scale,
-                            y: canvasHeight - (currentY * scale)
+                            y: transformY(currentY)
                         });
                     });
                     break;
@@ -1302,7 +1419,7 @@ class FontCreatorController {
                         currentY += dy;
                         currentStroke.push({
                             x: currentX * scale,
-                            y: canvasHeight - (currentY * scale)
+                            y: transformY(currentY)
                         });
                     });
                     break;
@@ -1323,7 +1440,7 @@ class FontCreatorController {
                             const by = inv * inv * currentY + 2 * inv * ratio * cy + ratio * ratio * y;
                             currentStroke.push({
                                 x: bx * scale,
-                                y: canvasHeight - (by * scale)
+                                y: transformY(by)
                             });
                         }
                         currentX = x;
@@ -1346,7 +1463,7 @@ class FontCreatorController {
                             const by = inv * inv * currentY + 2 * inv * ratio * cy + ratio * ratio * y;
                             currentStroke.push({
                                 x: bx * scale,
-                                y: canvasHeight - (by * scale)
+                                y: transformY(by)
                             });
                         }
                         currentX = x;
