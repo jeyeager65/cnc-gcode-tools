@@ -171,10 +171,10 @@ git clone https://github.com/jeyeager65/cnc-gcode-viewer.git
 cd cnc-gcode-viewer
 
 # Open in browser
-# Simply open src/index.html or src/fluidnc.html in your browser
+# Simply open src/gcodeviewer.html or src/gcodeviewer-fluidnc.html in your browser
 # Or use a local server (recommended for FluidNC version):
 python -m http.server 8000
-# Then visit http://localhost:8000/src/index.html or fluidnc.html
+# Then visit http://localhost:8000/src/gcodeviewer.html or gcodeviewer-fluidnc.html
 ```
 
 ### Making Changes

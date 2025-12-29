@@ -4,21 +4,28 @@ class FontCreatorController {
         this.canvas = null;
         this.ctx = null;
         this.font = {}; // { 'A': { strokes: [...], bounds: {...} }, ... }
-        this.kerning = {}; // { 'AV': -2, 'To': -1, ... }
-        this.fontMetrics = { unitsPerEm: 1000, ascent: 800, descent: -200, capHeight: 800, xHeight: 500 };
+        this.kerning = []; // Array of {type:'unicode'|'glyph', u1|g1, u2|g2, k} following SVG 1.1 hkern spec
+        this.fontMetrics = { unitsPerEm: 1000, ascent: 800, descent: -200, capHeight: 700, xHeight: 500 };
         this.currentChar = null;
         this.currentFontId = null; // ID of currently loaded font
-        this.charArray = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789`~!@#$%^&*()-_=+[{]}\\|;:\'",<.>/? \u2018\u2019\u201C\u201D\u2014'.split('');
+        this.defaultCharArray = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789`~!@#$%^&*()-_=+[{]}\\|;:\'",<.>/? \u2018\u2019\u201C\u201D\u2014'.split('');
+        this.charArray = [...this.defaultCharArray]; // Working character array (can be extended)
         this.strokes = []; // Current character strokes
         this.showGuides = true;
-        // Guide line positions (as percentage of canvas height, 0-100)
-        this.guidePositions = { ascent: 15, capHeight: 25, xHeight: 45, baseline: 75, descender: 85 };
+        // Guide line positions (in SVG font units, matching fontMetrics)
+        this.guidePositions = { ascent: 800, capHeight: 700, xHeight: 500, baseline: 0, descent: -200 };
         this.currentStroke = null;
         this.isDrawing = false;
         this.history = [];
         this.historyIndex = -1;
         this.generatedGCode = '';
         this.gridSize = 30;
+        
+        // Line dragging state
+        this.isDraggingLine = false;
+        this.dragLineType = null; // 'origin' or 'advance'
+        this.dragStartX = 0;
+        this.dragLineStartValue = 0;
     }
 
     // Initialize character drawing canvas
@@ -75,23 +82,53 @@ class FontCreatorController {
     // Setup character set grid buttons
     setupCharacterSet() {
         const grid = document.getElementById('char-grid');
+        if (!grid) {
+            console.error('char-grid element not found!');
+            return;
+        }
         grid.innerHTML = '';
+        
+        console.log('Setting up character grid with', this.charArray.length, 'characters');
+        let buttonsAdded = 0;
         
         this.charArray.forEach(char => {
             const btn = document.createElement('button');
             btn.className = 'char-button';
-            btn.textContent = char === ' ' ? '' : char;
+            btn.textContent = char === ' ' ? '␣' : char;
             btn.dataset.char = char;
             btn.onclick = () => this.selectCharacter(char);
+            
             grid.appendChild(btn);
+            buttonsAdded++;
         });
+        
+        console.log('Added', buttonsAdded, 'buttons to grid. Grid children count:', grid.children.length);
+        console.log('Grid display style:', window.getComputedStyle(grid).display);
+        console.log('Grid visibility:', window.getComputedStyle(grid).visibility);
+        console.log('Grid parent display:', window.getComputedStyle(grid.parentElement).display);
     }
 
     // Setup event listeners for font creator tab controls
     setupFontCreatorControls() {
         document.getElementById('clear-char').onclick = () => this.clearCharacter();
+        document.getElementById('delete-char').onclick = () => this.deleteCurrentCharacter();
         document.getElementById('prev-char').onclick = () => this.navigateCharacter(-1);
         document.getElementById('next-char').onclick = () => this.navigateCharacter(1);
+        
+        // Add custom character
+        document.getElementById('add-custom-char').onclick = () => {
+            const input = document.getElementById('custom-char-input');
+            const chars = input.value;
+            if (chars) {
+                this.addCustomCharacters(chars);
+                input.value = '';
+            }
+        };
+        document.getElementById('custom-char-input').onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('add-custom-char').click();
+            }
+        };
         document.getElementById('undo').onclick = () => this.undo();
         document.getElementById('redo').onclick = () => this.redo();
         
@@ -100,14 +137,12 @@ class FontCreatorController {
         document.getElementById('save-font').onclick = () => this.saveFont();
         document.getElementById('preview-font').onclick = () => this.previewFont();
         document.getElementById('delete-font').onclick = () => this.deleteFont();
-        document.getElementById('import-font-btn').onclick = () => document.getElementById('import-font').click();
         document.getElementById('import-svg-font-btn').onclick = () => document.getElementById('import-svg-font').click();
-        document.getElementById('export-font').onclick = () => this.exportFont();
         
         // Collapsible sections
         document.getElementById('char-set-header').onclick = () => {
             const header = document.getElementById('char-set-header');
-            const content = document.getElementById('char-grid');
+            const content = header.nextElementSibling; // Get the collapsible-content div
             header.classList.toggle('collapsed');
             content.classList.toggle('collapsed');
         };
@@ -174,7 +209,6 @@ class FontCreatorController {
             }
         };
         
-        document.getElementById('import-font').onchange = (e) => this.importFont(e);
         document.getElementById('import-svg-font').onchange = (e) => this.importSVGFont(e);
         document.getElementById('toggle-guides').onclick = () => this.toggleGuides();
         document.getElementById('add-kerning').onclick = () => this.addKerning();
@@ -184,7 +218,7 @@ class FontCreatorController {
         document.getElementById('cap-height-pos').oninput = (e) => this.updateGuidePosition('capHeight', parseFloat(e.target.value));
         document.getElementById('x-height-pos').oninput = (e) => this.updateGuidePosition('xHeight', parseFloat(e.target.value));
         document.getElementById('baseline-pos').oninput = (e) => this.updateGuidePosition('baseline', parseFloat(e.target.value));
-        document.getElementById('descender-pos').oninput = (e) => this.updateGuidePosition('descender', parseFloat(e.target.value));
+        document.getElementById('descent-pos').oninput = (e) => this.updateGuidePosition('descent', parseFloat(e.target.value));
         document.getElementById('reset-guides').onclick = () => this.resetGuidePositions();
         
         // Preview modal
@@ -198,6 +232,23 @@ class FontCreatorController {
                 document.getElementById('font-preview-modal').style.display = 'none';
             }
         };
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Undo: Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                this.undo();
+                return;
+            }
+            
+            // Redo: Ctrl+Y or Ctrl+Shift+Z (Windows/Linux) or Cmd+Shift+Z (Mac)
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                e.preventDefault();
+                this.redo();
+                return;
+            }
+        });
     }
 
     // Setup event listeners for text-to-gcode tab controls
@@ -214,19 +265,101 @@ class FontCreatorController {
         document.getElementById('font-selector').onchange = () => this.loadSelectedFont();
     }
 
-    // Get canvas coordinates from mouse/touch event
+    // Get canvas coordinates from mouse/touch event, accounting for visual centering
     getCanvasCoords(e) {
         const rect = this.canvas.getBoundingClientRect();
-        return {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
+        let x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        // Subtract X offset to get actual stroke coordinate (undo visual centering)
+        if (this.currentChar) {
+            const normalizedChar = this.normalizeCharacter(this.currentChar);
+            const charData = this.font[normalizedChar];
+            if (charData?.horizAdvX !== undefined) {
+                const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                const scale = (this.canvas.height * 0.7) / fontRange;
+                const horizAdvXCanvas = charData.horizAdvX * scale;
+                const xOffset = (this.canvas.width - horizAdvXCanvas) / 2;
+                x -= xOffset;
+            }
+        }
+        
+        return { x, y, xOffset: this.getXOffset() };
+    }
+    
+    // Get X offset for visual centering
+    getXOffset() {
+        if (!this.currentChar) return 0;
+        const normalizedChar = this.normalizeCharacter(this.currentChar);
+        const charData = this.font[normalizedChar];
+        if (charData?.horizAdvX !== undefined) {
+            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+            const scale = (this.canvas.height * 0.7) / fontRange;
+            const horizAdvXCanvas = charData.horizAdvX * scale;
+            return (this.canvas.width - horizAdvXCanvas) / 2;
+        }
+        return 0;
+    }
+    
+    // Check if mouse is near a draggable line handle
+    checkLineHit(canvasX, canvasY, threshold = 15) {
+        if (!this.currentChar) return null;
+        
+        // Only check if in the drag handle area (top 40px)
+        if (canvasY > 40) return null;
+        
+        const xOffset = this.getXOffset();
+        const normalizedChar = this.normalizeCharacter(this.currentChar);
+        const charData = this.font[normalizedChar];
+        
+        // Check origin line handle
+        if (Math.abs(canvasX - xOffset) < threshold) {
+            return 'origin';
+        }
+        
+        // Check advance line handle
+        if (charData?.horizAdvX !== undefined) {
+            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+            const scale = (this.canvas.height * 0.7) / fontRange;
+            const horizAdvXCanvas = charData.horizAdvX * scale;
+            const advanceX = horizAdvXCanvas + xOffset;
+            
+            if (Math.abs(canvasX - advanceX) < threshold) {
+                return 'advance';
+            }
+        }
+        
+        return null;
     }
 
     // Start drawing a new stroke
     startDrawing(e) {
         if (!this.currentChar) {
             this.updateStatus('Please select a character first');
+            return;
+        }
+        
+        // Check if clicking on a draggable line handle
+        const rect = this.canvas.getBoundingClientRect();
+        const canvasX = e.clientX - rect.left;
+        const canvasY = e.clientY - rect.top;
+        const lineHit = this.checkLineHit(canvasX, canvasY);
+        
+        if (lineHit) {
+            this.isDraggingLine = true;
+            this.dragLineType = lineHit;
+            this.dragStartX = canvasX;
+            
+            // Store initial values
+            if (lineHit === 'origin') {
+                this.dragLineStartValue = 0; // Origin is always at 0 in stroke coordinates
+            } else if (lineHit === 'advance') {
+                const normalizedChar = this.normalizeCharacter(this.currentChar);
+                const charData = this.font[normalizedChar];
+                this.dragLineStartValue = charData?.horizAdvX || 0;
+            }
+            
+            this.canvas.style.cursor = 'ew-resize';
             return;
         }
 
@@ -237,27 +370,99 @@ class FontCreatorController {
 
     // Continue drawing current stroke
     draw(e) {
+        // Handle line dragging
+        if (this.isDraggingLine) {
+            const rect = this.canvas.getBoundingClientRect();
+            const canvasX = e.clientX - rect.left;
+            const deltaX = canvasX - this.dragStartX;
+            
+            const normalizedChar = this.normalizeCharacter(this.currentChar);
+            const charData = this.font[normalizedChar];
+            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+            const scale = (this.canvas.height * 0.7) / fontRange;
+            
+            if (this.dragLineType === 'origin') {
+                // Dragging origin right means strokes should move LEFT in their coordinate system
+                // to keep them in the same visual position (origin moving toward them)
+                const deltaXSVG = deltaX / scale;
+                this.strokes.forEach(stroke => {
+                    stroke.forEach(pt => {
+                        pt.x -= deltaX;  // Opposite direction in canvas pixels
+                    });
+                });
+                
+                // horizAdvX should also decrease (origin moving closer to advance)
+                if (charData) {
+                    charData.horizAdvX = (charData.horizAdvX || 0) - deltaXSVG;
+                    this.updateCharacterInFont();
+                }
+                
+                this.dragStartX = canvasX;
+                this.render();
+            } else if (this.dragLineType === 'advance') {
+                // Update advance width
+                const deltaXSVG = deltaX / scale;
+                const newAdvance = this.dragLineStartValue + deltaXSVG;
+                if (charData && newAdvance > 0) {
+                    charData.horizAdvX = newAdvance;
+                    this.updateCharacterInFont();
+                    this.render();
+                }
+            }
+            return;
+        }
+        
+        // Update cursor based on line handle proximity
+        const rect = this.canvas.getBoundingClientRect();
+        const canvasX = e.clientX - rect.left;
+        const canvasY = e.clientY - rect.top;
+        const lineHit = this.checkLineHit(canvasX, canvasY);
+        this.canvas.style.cursor = lineHit ? 'grab' : 'crosshair';
+        
         if (!this.isDrawing || !this.currentStroke) return;
 
         const pos = this.getCanvasCoords(e);
         this.currentStroke.push({ x: pos.x, y: pos.y });
         this.render();
 
-        // Draw temporary stroke
+        // Calculate X offset for visual centering
+        let xOffset = 0;
+        if (this.currentChar) {
+            const normalizedChar = this.normalizeCharacter(this.currentChar);
+            const charData = this.font[normalizedChar];
+            if (charData?.horizAdvX !== undefined) {
+                const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                const scale = (this.canvas.height * 0.7) / fontRange;
+                const horizAdvXCanvas = charData.horizAdvX * scale;
+                xOffset = (this.canvas.width - horizAdvXCanvas) / 2;
+            }
+        }
+
+        // Draw temporary stroke (apply X offset for display)
         this.ctx.strokeStyle = '#4CAF50';
         this.ctx.lineWidth = 2;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         this.ctx.beginPath();
-        this.ctx.moveTo(this.currentStroke[0].x, this.currentStroke[0].y);
+        this.ctx.moveTo(this.currentStroke[0].x + xOffset, this.currentStroke[0].y);
         for (let i = 1; i < this.currentStroke.length; i++) {
-            this.ctx.lineTo(this.currentStroke[i].x, this.currentStroke[i].y);
+            this.ctx.lineTo(this.currentStroke[i].x + xOffset, this.currentStroke[i].y);
         }
         this.ctx.stroke();
     }
 
     // Stop drawing and finalize stroke
     stopDrawing() {
+        // Handle line dragging end
+        if (this.isDraggingLine) {
+            this.isDraggingLine = false;
+            this.dragLineType = null;
+            this.canvas.style.cursor = 'crosshair';
+            this.saveToHistory();
+            this.saveToLocalStorage();
+            return;
+        }
+        
         if (!this.isDrawing || !this.currentStroke) return;
 
         this.isDrawing = false;
@@ -599,7 +804,25 @@ class FontCreatorController {
         }
 
         this.currentChar = char;
-        this.strokes = this.font[char]?.strokes ? JSON.parse(JSON.stringify(this.font[char].strokes)) : [];
+        const normalizedChar = this.normalizeCharacter(char);
+        this.strokes = this.font[normalizedChar]?.strokes ? JSON.parse(JSON.stringify(this.font[normalizedChar].strokes)) : [];
+        
+        // Initialize horizAdvX for new characters: 25% origin, 75% advance (50% drawing area)
+        if (!this.font[normalizedChar]) {
+            const canvasWidth = this.canvas.width;
+            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+            const svgToCanvasScale = (this.canvas.height * 0.7) / fontRange;
+            // horizAdvX represents character width (origin to advance)
+            // For 25% left margin and 25% right margin: horizAdvX = 50% of canvas
+            // The centering logic will then position origin at 25% and advance at 75%
+            const targetAdvanceCanvas = canvasWidth * 0.5;  // 50% of canvas width
+            this.font[normalizedChar] = {
+                strokes: [],
+                bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 },
+                horizAdvX: targetAdvanceCanvas / svgToCanvasScale  // Convert to SVG units
+            };
+        }
+        
         this.history = [JSON.parse(JSON.stringify(this.strokes))];
         this.historyIndex = 0;
         
@@ -607,6 +830,14 @@ class FontCreatorController {
         document.querySelectorAll('.char-button').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.char === char);
         });
+        
+        // Show/hide delete button based on whether character is custom
+        const deleteBtn = document.getElementById('delete-char');
+        if (this.defaultCharArray.includes(char)) {
+            deleteBtn.style.display = 'none';
+        } else {
+            deleteBtn.style.display = 'block';
+        }
         
         this.render();
         this.updateStatus(`Drawing: ${char === ' ' ? 'SPACE' : char}`);
@@ -617,10 +848,20 @@ class FontCreatorController {
         if (!this.currentChar) return;
 
         const bounds = this.calculateBounds(this.strokes);
+        
+        // Preserve horizAdvX if it exists (from imported SVG fonts)
+        const existingChar = this.font[this.currentChar];
+        const horizAdvX = existingChar?.horizAdvX;
+        
         this.font[this.currentChar] = {
             strokes: JSON.parse(JSON.stringify(this.strokes)),
             bounds: bounds
         };
+        
+        // Restore horizAdvX if it existed
+        if (horizAdvX !== undefined) {
+            this.font[this.currentChar].horizAdvX = horizAdvX;
+        }
 
         // Update UI
         const btn = Array.from(document.querySelectorAll('.char-button')).find(b => b.dataset.char === this.currentChar);
@@ -659,6 +900,21 @@ class FontCreatorController {
     render() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
+        // Calculate X offset to center character based on horizAdvX
+        let xOffset = 0;
+        if (this.currentChar) {
+            const normalizedChar = this.normalizeCharacter(this.currentChar);
+            const charData = this.font[normalizedChar];
+            if (charData?.horizAdvX !== undefined) {
+                // Convert horizAdvX from SVG units to canvas pixels
+                const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                const scale = (this.canvas.height * 0.7) / fontRange;
+                const horizAdvXCanvas = charData.horizAdvX * scale;
+                // Center the advance width in the canvas
+                xOffset = (this.canvas.width - horizAdvXCanvas) / 2;
+            }
+        }
+        
         // Draw grid
         this.ctx.strokeStyle = '#e0e0e0';
         this.ctx.lineWidth = 1;
@@ -676,11 +932,18 @@ class FontCreatorController {
         
         // Draw guide lines if enabled
         if (this.showGuides) {
-            const ascentY = this.canvas.height * (this.guidePositions.ascent / 100);
-            const capHeightY = this.canvas.height * (this.guidePositions.capHeight / 100);
-            const xHeightY = this.canvas.height * (this.guidePositions.xHeight / 100);
-            const baselineY = this.canvas.height * (this.guidePositions.baseline / 100);
-            const descenderY = this.canvas.height * (this.guidePositions.descender / 100);
+            // Convert SVG font units to canvas Y coordinates
+            // SVG: baseline=0, positive=up, negative=down
+            // Canvas: top=0, positive=down
+            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+            const scale = (this.canvas.height * 0.7) / fontRange; // 70% of canvas for font
+            const baselineY = this.canvas.height * 0.75; // Baseline at 75% down
+            
+            const ascentY = baselineY - (this.guidePositions.ascent * scale);
+            const capHeightY = baselineY - (this.guidePositions.capHeight * scale);
+            const xHeightY = baselineY - (this.guidePositions.xHeight * scale);
+            const baselineYpos = baselineY - (this.guidePositions.baseline * scale);
+            const descenderY = baselineY - (this.guidePositions.descent * scale);
             
             this.ctx.setLineDash([5, 5]);
             this.ctx.lineWidth = 2;
@@ -711,30 +974,30 @@ class FontCreatorController {
             this.ctx.moveTo(0, xHeightY);
             this.ctx.lineTo(this.canvas.width, xHeightY);
             this.ctx.stroke();
-            this.ctx.fillText('x-height', 5, xHeightY - 5);
+            this.ctx.fillText('X-Height', 5, xHeightY - 5);
             
             // Baseline (red)
             this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
             this.ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
             this.ctx.beginPath();
-            this.ctx.moveTo(0, baselineY);
-            this.ctx.lineTo(this.canvas.width, baselineY);
+            this.ctx.moveTo(0, baselineYpos);
+            this.ctx.lineTo(this.canvas.width, baselineYpos);
             this.ctx.stroke();
-            this.ctx.fillText('Baseline', 5, baselineY + 15);
+            this.ctx.fillText('Baseline', 5, baselineYpos + 15);
             
-            // Descender (orange)
+            // Descent (orange)
             this.ctx.strokeStyle = 'rgba(255, 165, 0, 0.5)';
             this.ctx.fillStyle = 'rgba(255, 165, 0, 0.7)';
             this.ctx.beginPath();
             this.ctx.moveTo(0, descenderY);
             this.ctx.lineTo(this.canvas.width, descenderY);
             this.ctx.stroke();
-            this.ctx.fillText('Descender', 5, descenderY + 15);
+            this.ctx.fillText('Descent', 5, descenderY + 15);
             
             this.ctx.setLineDash([]);
         }
 
-        // Draw strokes
+        // Draw strokes (apply X offset for centering)
         this.ctx.strokeStyle = '#333333';
         this.ctx.lineWidth = 2;
         this.ctx.lineCap = 'round';
@@ -744,29 +1007,139 @@ class FontCreatorController {
             if (stroke.length < 2) return;
             
             this.ctx.beginPath();
-            this.ctx.moveTo(stroke[0].x, stroke[0].y);
+            this.ctx.moveTo(stroke[0].x + xOffset, stroke[0].y);
             for (let i = 1; i < stroke.length; i++) {
-                this.ctx.lineTo(stroke[i].x, stroke[i].y);
+                this.ctx.lineTo(stroke[i].x + xOffset, stroke[i].y);
             }
             this.ctx.stroke();
 
             // Draw start point (green) and stroke number
             this.ctx.fillStyle = '#4CAF50';
             this.ctx.beginPath();
-            this.ctx.arc(stroke[0].x, stroke[0].y, 4, 0, Math.PI * 2);
+            this.ctx.arc(stroke[0].x + xOffset, stroke[0].y, 4, 0, Math.PI * 2);
             this.ctx.fill();
             
             // Draw stroke number
             this.ctx.fillStyle = '#4CAF50';
             this.ctx.font = '12px sans-serif';
-            this.ctx.fillText(idx + 1, stroke[0].x + 8, stroke[0].y - 8);
+            this.ctx.fillText(idx + 1, stroke[0].x + xOffset + 8, stroke[0].y - 8);
             
             // Draw end point (red)
             this.ctx.fillStyle = '#f44336';
             this.ctx.beginPath();
-            this.ctx.arc(stroke[stroke.length - 1].x, stroke[stroke.length - 1].y, 3, 0, Math.PI * 2);
+            this.ctx.arc(stroke[stroke.length - 1].x + xOffset, stroke[stroke.length - 1].y, 3, 0, Math.PI * 2);
             this.ctx.fill();
         });
+        
+        // Draw character spacing indicators (apply X offset for centering)
+        if (this.currentChar) {
+            const normalizedChar = this.normalizeCharacter(this.currentChar);
+            const charData = this.font[normalizedChar];
+            
+            // Always draw origin line (x=0, where character positioning starts)
+            // Extend line to top with drag handle
+            this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+            this.ctx.lineWidth = 2;
+            this.ctx.setLineDash([5, 3]);
+            this.ctx.beginPath();
+            this.ctx.moveTo(xOffset, 0);
+            this.ctx.lineTo(xOffset, this.canvas.height);
+            this.ctx.stroke();
+            
+            // Draw drag handle at top
+            this.ctx.setLineDash([]);
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.roundRect(xOffset - 15, 5, 30, 30, 5);
+            this.ctx.fill();
+            this.ctx.stroke();
+            
+            // Draw move icon (horizontal arrows)
+            this.ctx.strokeStyle = 'white';
+            this.ctx.lineWidth = 2;
+            this.ctx.lineCap = 'round';
+            // Left arrow
+            this.ctx.beginPath();
+            this.ctx.moveTo(xOffset - 8, 20);
+            this.ctx.lineTo(xOffset - 2, 20);
+            this.ctx.moveTo(xOffset - 8, 20);
+            this.ctx.lineTo(xOffset - 5, 17);
+            this.ctx.moveTo(xOffset - 8, 20);
+            this.ctx.lineTo(xOffset - 5, 23);
+            this.ctx.stroke();
+            // Right arrow
+            this.ctx.beginPath();
+            this.ctx.moveTo(xOffset + 8, 20);
+            this.ctx.lineTo(xOffset + 2, 20);
+            this.ctx.moveTo(xOffset + 8, 20);
+            this.ctx.lineTo(xOffset + 5, 17);
+            this.ctx.moveTo(xOffset + 8, 20);
+            this.ctx.lineTo(xOffset + 5, 23);
+            this.ctx.stroke();
+            
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.font = 'bold 12px sans-serif';
+            this.ctx.fillText('Origin (0)', xOffset + 5, 50);
+            
+            // Draw advance width line if defined
+            // horizAdvX is stored in SVG units, need to scale to canvas
+            if (charData?.horizAdvX !== undefined) {
+                const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                const scale = (this.canvas.height * 0.7) / fontRange;
+                const horizAdvXCanvas = charData.horizAdvX * scale;
+                
+                // Draw line
+                this.ctx.strokeStyle = 'rgba(255, 0, 255, 0.6)';
+                this.ctx.lineWidth = 2;
+                this.ctx.setLineDash([5, 5]);
+                this.ctx.beginPath();
+                this.ctx.moveTo(horizAdvXCanvas + xOffset, 0);
+                this.ctx.lineTo(horizAdvXCanvas + xOffset, this.canvas.height);
+                this.ctx.stroke();
+                
+                // Draw drag handle at top
+                this.ctx.setLineDash([]);
+                this.ctx.fillStyle = 'rgba(255, 0, 255, 0.8)';
+                this.ctx.strokeStyle = 'rgba(200, 0, 200, 0.9)';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.roundRect(horizAdvXCanvas + xOffset - 15, 5, 30, 30, 5);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Draw move icon (horizontal arrows)
+                this.ctx.strokeStyle = 'white';
+                this.ctx.lineWidth = 2;
+                this.ctx.lineCap = 'round';
+                const advX = horizAdvXCanvas + xOffset;
+                // Left arrow
+                this.ctx.beginPath();
+                this.ctx.moveTo(advX - 8, 20);
+                this.ctx.lineTo(advX - 2, 20);
+                this.ctx.moveTo(advX - 8, 20);
+                this.ctx.lineTo(advX - 5, 17);
+                this.ctx.moveTo(advX - 8, 20);
+                this.ctx.lineTo(advX - 5, 23);
+                this.ctx.stroke();
+                // Right arrow
+                this.ctx.beginPath();
+                this.ctx.moveTo(advX + 8, 20);
+                this.ctx.lineTo(advX + 2, 20);
+                this.ctx.moveTo(advX + 8, 20);
+                this.ctx.lineTo(advX + 5, 17);
+                this.ctx.moveTo(advX + 8, 20);
+                this.ctx.lineTo(advX + 5, 23);
+                this.ctx.stroke();
+                
+                this.ctx.fillStyle = 'rgba(255, 0, 255, 0.8)';
+                this.ctx.font = '12px sans-serif';
+                this.ctx.fillText(`Advance (${Math.round(charData.horizAdvX)})`, horizAdvXCanvas + xOffset + 5, 50);
+            }
+            
+            this.ctx.setLineDash([]);
+        }
     }
 
     // Clear current character
@@ -775,12 +1148,89 @@ class FontCreatorController {
         this.history = [];
         this.historyIndex = -1;
         if (this.currentChar) {
-            delete this.font[this.currentChar];
+            // Reset to default new character position (25% origin, 75% advance)
+            const normalizedChar = this.normalizeCharacter(this.currentChar);
+            const canvasWidth = this.canvas.width;
+            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+            const svgToCanvasScale = (this.canvas.height * 0.7) / fontRange;
+            const targetAdvanceCanvas = canvasWidth * 0.5;  // 50% of canvas width
+            
+            this.font[normalizedChar] = {
+                strokes: [],
+                bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 },
+                horizAdvX: targetAdvanceCanvas / svgToCanvasScale  // Convert to SVG units
+            };
+            
             const btn = Array.from(document.querySelectorAll('.char-button')).find(b => b.dataset.char === this.currentChar);
             if (btn) btn.classList.remove('defined');
         }
         this.render();
         this.saveToLocalStorage();
+    }
+
+    // Add custom character(s) to character set
+    addCustomCharacters(chars) {
+        let added = 0;
+        for (const char of chars) {
+            if (!this.charArray.includes(char)) {
+                this.charArray.push(char);
+                added++;
+            }
+        }
+        if (added > 0) {
+            this.setupCharacterSet();
+            // Update defined markers for any existing glyphs
+            Object.keys(this.font).forEach(char => {
+                const btn = Array.from(document.querySelectorAll('.char-button')).find(b => b.dataset.char === char);
+                if (btn) btn.classList.add('defined');
+            });
+            this.updateStatus(`Added ${added} character(s) to set`);
+        } else {
+            this.updateStatus('Character(s) already in set');
+        }
+    }
+
+    // Remove custom character from character set
+    removeCustomCharacter(char) {
+        if (this.defaultCharArray.includes(char)) {
+            this.updateStatus('Cannot remove default characters');
+            return;
+        }
+        
+        const index = this.charArray.indexOf(char);
+        if (index > -1) {
+            // Warn if character has a glyph defined
+            const normalizedChar = this.normalizeCharacter(char);
+            if (this.font[normalizedChar]?.strokes?.length > 0) {
+                if (!confirm(`Character "${char}" has a glyph defined. Remove it from the character set?`)) {
+                    return;
+                }
+            }
+            
+            this.charArray.splice(index, 1);
+            
+            // If this was the current character, select another
+            if (this.currentChar === char) {
+                this.currentChar = null;
+                if (this.charArray.length > 0) {
+                    this.selectCharacter(this.charArray[0]);
+                }
+            }
+            
+            this.setupCharacterSet();
+            // Update defined markers
+            Object.keys(this.font).forEach(char => {
+                const btn = Array.from(document.querySelectorAll('.char-button')).find(b => b.dataset.char === char);
+                if (btn) btn.classList.add('defined');
+            });
+            this.updateStatus(`Removed "${char}" from character set`);
+        }
+    }
+
+    // Delete the currently selected character from the character set
+    deleteCurrentCharacter() {
+        if (!this.currentChar) return;
+        this.removeCustomCharacter(this.currentChar);
     }
 
     // Clear canvas (undo-able)
@@ -838,7 +1288,7 @@ class FontCreatorController {
         }
         
         this.font = {};
-        this.kerning = {};
+        this.kerning = [];
         this.currentFontId = 'font_' + Date.now();
         document.getElementById('font-name').value = 'New Font';
         this.strokes = [];
@@ -936,8 +1386,9 @@ class FontCreatorController {
         fonts[this.currentFontId] = {
             id: this.currentFontId,
             name: document.getElementById('font-name').value,
-            font: this.font,
+            glyphs: this.font,
             kerning: this.kerning,
+            fontMetrics: this.fontMetrics,
             lastModified: new Date().toISOString()
         };
         
@@ -969,9 +1420,32 @@ class FontCreatorController {
     // Load font data into editor
     loadFontData(fontData) {
         this.currentFontId = fontData.id;
-        this.font = fontData.font || {};
-        this.kerning = fontData.kerning || {};
+        this.font = fontData.glyphs || {};
+        // Ensure kerning is always an array (convert old object format if needed)
+        if (Array.isArray(fontData.kerning)) {
+            this.kerning = fontData.kerning;
+        } else if (fontData.kerning && typeof fontData.kerning === 'object') {
+            // Convert old object format on the fly
+            this.kerning = [];
+        } else {
+            this.kerning = [];
+        }
+        this.fontMetrics = fontData.fontMetrics || {
+            unitsPerEm: 1000,
+            ascent: 800,
+            descent: -200,
+            capHeight: 700,
+            xHeight: 500
+        };
         document.getElementById('font-name').value = fontData.name || 'Custom Font';
+        
+        // Add any characters from the font that aren't in the character set
+        const fontChars = Object.keys(this.font);
+        const newChars = fontChars.filter(char => !this.charArray.includes(char));
+        if (newChars.length > 0) {
+            this.charArray.push(...newChars);
+            this.setupCharacterSet();
+        }
         
         // Update UI
         document.querySelectorAll('.char-button').forEach(btn => btn.classList.remove('defined'));
@@ -1037,23 +1511,6 @@ class FontCreatorController {
     }
 
     // Export font as JSON file
-    exportFont() {
-        const fontData = {
-            name: document.getElementById('font-name').value,
-            font: this.font,
-            kerning: this.kerning,
-            version: '1.1'
-        };
-
-        const blob = new Blob([JSON.stringify(fontData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${fontData.name.replace(/\s+/g, '_')}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }
-
     // Preview all characters in font
     previewFont() {
         const modal = document.getElementById('font-preview-modal');
@@ -1100,7 +1557,8 @@ class FontCreatorController {
             ctx.fillText(char, x + charSize / 2, y + charSize + 15);
             
             // Draw character strokes
-            const charData = this.font[char];
+            const normalizedChar = this.normalizeCharacter(char);
+            const charData = this.font[normalizedChar];
             if (!charData || !charData.strokes) return;
             
             const scaleX = charSize / this.canvas.height;
@@ -1128,59 +1586,6 @@ class FontCreatorController {
     }
 
     // Import font from JSON file
-    importFont(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            try {
-                const data = JSON.parse(event.target.result);
-                
-                // Check if font with same ID already exists
-                const fonts = JSON.parse(localStorage.getItem('gcodeFonts') || '{}');
-                const importedId = data.id;
-                
-                if (importedId && fonts[importedId]) {
-                    // Font with this ID exists - ask user if they want to replace it
-                    const existingName = fonts[importedId].name;
-                    const importedName = data.name || 'Imported Font';
-                    if (!confirm(`A font with ID "${importedId}" already exists (${existingName}).\n\nReplace it with "${importedName}"?`)) {
-                        // User cancelled - create new font with different ID
-                        this.currentFontId = 'font_' + Date.now();
-                    } else {
-                        // User confirmed - use existing ID to replace
-                        this.currentFontId = importedId;
-                    }
-                } else if (importedId) {
-                    // Font ID doesn't exist yet - use it
-                    this.currentFontId = importedId;
-                } else {
-                    // No ID in imported file - create new one
-                    this.currentFontId = 'font_' + Date.now();
-                }
-                
-                this.font = data.font || {};
-                this.kerning = data.kerning || {};
-                document.getElementById('font-name').value = data.name || 'Imported Font';
-                
-                // Update UI
-                document.querySelectorAll('.char-button').forEach(btn => btn.classList.remove('defined'));
-                Object.keys(this.font).forEach(char => {
-                    const btn = Array.from(document.querySelectorAll('.char-button')).find(b => b.dataset.char === char);
-                    if (btn) btn.classList.add('defined');
-                });
-                
-                this.updateKerningList();
-                this.saveToLocalStorage();
-                this.updateStatus(`Font loaded: ${data.name || 'Imported Font'}`);
-            } catch (err) {
-                alert('Error loading font: ' + err.message);
-            }
-        };
-        reader.readAsText(file);
-    }
-
     // Import SVG font and convert to GCode font format
     importSVGFont(e) {
         const file = e.target.files[0];
@@ -1220,20 +1625,19 @@ class FontCreatorController {
                 const canvasHeight = this.canvas.height;
                 const fontRange = ascent - descent; // Total vertical range of font
                 
-                // Position baseline at 75% of canvas height (default)
-                const baselinePos = this.guidePositions.baseline;
-                const baselineY = canvasHeight * (baselinePos / 100);
-                
                 // Calculate scale to fit font within available vertical space
                 const availableHeight = canvasHeight * 0.7; // Use 70% of canvas height
                 const baseScale = availableHeight / fontRange;
                 
-                // Calculate guide positions based on font metrics
-                this.guidePositions.baseline = 75;
-                this.guidePositions.ascent = 75 - (ascent * baseScale / canvasHeight * 100);
-                this.guidePositions.capHeight = 75 - (capHeight * baseScale / canvasHeight * 100);
-                this.guidePositions.xHeight = 75 - (xHeight * baseScale / canvasHeight * 100);
-                this.guidePositions.descender = 75 + (Math.abs(descent) * baseScale / canvasHeight * 100);
+                // Position baseline at 75% of canvas height
+                const baselineY = canvasHeight * 0.75;
+                
+                // Set guide positions directly from font metrics (in SVG font units)
+                this.guidePositions.ascent = ascent;
+                this.guidePositions.capHeight = capHeight;
+                this.guidePositions.xHeight = xHeight;
+                this.guidePositions.baseline = 0;
+                this.guidePositions.descent = descent;
                 
                 // Update guide position inputs
                 this.updateGuidePositionInputs();
@@ -1272,7 +1676,7 @@ class FontCreatorController {
                     importedFont[unicode] = {
                         strokes: strokes,
                         bounds: bounds,
-                        horizAdvX: horizAdvX * baseScale // Store in scaled canvas units
+                        horizAdvX: horizAdvX // Store in SVG font units
                     };
                     glyphCount++;
                 });
@@ -1281,10 +1685,42 @@ class FontCreatorController {
                     throw new Error('No valid glyphs found in SVG font');
                 }
                 
+                // Parse kerning pairs (SVG 1.1 hkern elements)
+                const hkerns = fontElement.querySelectorAll('hkern');
+                const importedKerning = [];
+                hkerns.forEach(hkern => {
+                    const u1 = hkern.getAttribute('u1');
+                    const u2 = hkern.getAttribute('u2');
+                    const g1 = hkern.getAttribute('g1');
+                    const g2 = hkern.getAttribute('g2');
+                    const k = parseFloat(hkern.getAttribute('k') || '0');
+                    
+                    // Convert SVG kerning (scaled) back to canvas units (k = decrease spacing per spec)
+                    const kValue = k / baseScale;
+                    
+                    if (u1 && u2) {
+                        // Unicode-based kerning
+                        importedKerning.push({
+                            type: 'unicode',
+                            u1: u1,
+                            u2: u2,
+                            k: kValue
+                        });
+                    } else if (g1 && g2) {
+                        // Glyph name-based kerning
+                        importedKerning.push({
+                            type: 'glyph',
+                            g1: g1,
+                            g2: g2,
+                            k: kValue
+                        });
+                    }
+                });
+                
                 // Create new font ID
                 this.currentFontId = 'font_' + Date.now();
                 this.font = importedFont;
-                this.kerning = {}; // SVG font kerning would need separate parsing
+                this.kerning = importedKerning;
                 document.getElementById('font-name').value = fontFamily;
                 
                 // Update UI
@@ -1495,6 +1931,99 @@ class FontCreatorController {
         return strokes;
     }
 
+    // Normalize Unicode characters to ASCII equivalents for font lookup
+    normalizeCharacter(char) {
+        const map = {
+            '\u2019': "'", // Right single quotation mark → apostrophe
+            '\u2018': "'", // Left single quotation mark → apostrophe
+            '\u201C': '"', // Left double quotation mark → quote
+            '\u201D': '"', // Right double quotation mark → quote
+            '\u2013': '-', // En dash → hyphen
+            '\u2014': '-', // Em dash → hyphen
+            '\u2026': '...' // Ellipsis → three periods
+        };
+        return map[char] || char;
+    }
+
+    // Get kerning adjustment for character pair (SVG 1.1 hkern evaluation)
+    // Returns k value where positive = decrease spacing, negative = increase spacing
+    getKerningAdjustment(char1, char2) {
+        let adjustment = 0;
+        
+        // Process all kerning rules in order (first match wins per SVG spec)
+        for (const rule of this.kerning) {
+            if (rule.type === 'unicode') {
+                if (this.matchesUnicodePattern(char1, rule.u1) && 
+                    this.matchesUnicodePattern(char2, rule.u2)) {
+                    adjustment += rule.k;
+                    // SVG spec: first matching rule applies, but we accumulate for flexibility
+                    // To match spec strictly, add 'break;' here
+                }
+            } else if (rule.type === 'glyph') {
+                // Glyph name matching (requires glyph-name attribute on glyphs)
+                // For now, we use unicode as fallback identifier
+                const glyph1 = this.getGlyphName(char1);
+                const glyph2 = this.getGlyphName(char2);
+                if (this.matchesGlyphPattern(glyph1, rule.g1) && 
+                    this.matchesGlyphPattern(glyph2, rule.g2)) {
+                    adjustment += rule.k;
+                }
+            }
+        }
+        
+        return adjustment;
+    }
+    
+    // Match character against unicode pattern (single char, range, or comma-separated list)
+    matchesUnicodePattern(char, pattern) {
+        if (!pattern) return false;
+        
+        // Single character match
+        if (pattern === char) return true;
+        
+        // Comma-separated list (e.g., "A,V,W")
+        if (pattern.includes(',')) {
+            const chars = pattern.split(',').map(c => c.trim());
+            if (chars.includes(char)) return true;
+        }
+        
+        // Range match (e.g., "A-Z", "a-z", "0-9")
+        if (pattern.includes('-') && pattern.length >= 3) {
+            const parts = pattern.split('-');
+            if (parts.length === 2) {
+                const start = parts[0].charCodeAt(0);
+                const end = parts[1].charCodeAt(0);
+                const code = char.charCodeAt(0);
+                if (code >= start && code <= end) return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    // Get glyph name for character (fallback to character itself)
+    getGlyphName(char) {
+        const normalizedChar = this.normalizeCharacter(char);
+        const charData = this.font[normalizedChar];
+        return charData?.glyphName || char;
+    }
+    
+    // Match glyph name against pattern (comma-separated list supported)
+    matchesGlyphPattern(glyphName, pattern) {
+        if (!pattern || !glyphName) return false;
+        
+        // Single glyph name match
+        if (pattern === glyphName) return true;
+        
+        // Comma-separated list
+        if (pattern.includes(',')) {
+            const names = pattern.split(',').map(n => n.trim());
+            if (names.includes(glyphName)) return true;
+        }
+        
+        return false;
+    }
+
     // Generate GCode from text input with kerning support
     generateGCode() {
         const text = document.getElementById('text-input').value;
@@ -1520,6 +2049,7 @@ class FontCreatorController {
 
         let gcode = [];
         let lastGCodeLine = ''; // Track last line to prevent duplicates
+        let lastFeedRate = null; // Track last feedrate to avoid redundant F parameters
         
         // Helper function to add GCode line only if different from last
         const addGCode = (line) => {
@@ -1566,17 +2096,38 @@ class FontCreatorController {
                     let wordWidth = 0;
                     for (let i = 0; i < word.length; i++) {
                         const char = word[i];
-                        const charData = this.font[char];
+                        const normalizedChar = this.normalizeCharacter(char);
+                        const charData = this.font[normalizedChar];
                         if (charData) {
-                            const bounds = charData.bounds;
-                            wordWidth += bounds.width * scale + charSpacing;
+                            // horizAdvX is in SVG units, bounds.width is in canvas pixels
+                            let charWidthCanvas;
+                            if (charData.horizAdvX !== undefined) {
+                                // Convert SVG units to canvas pixels
+                                const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                                const canvasScale = (this.canvas.height * 0.7) / fontRange;
+                                charWidthCanvas = charData.horizAdvX * canvasScale;
+                            } else {
+                                charWidthCanvas = charData.bounds.width;
+                            }
+                            const charWidth = charWidthCanvas * scale; // scale to output size
+                            wordWidth += charWidth + charSpacing;
                         } else {
                             wordWidth += outputSize * 0.5 + charSpacing;
                         }
                     }
                     
-                    // Account for space character width (use configured value)
-                    const spaceWidthTotal = spaceWidth + charSpacing;
+                    // Account for space character width (use font's horizAdvX if available)
+                    const spaceCharData = this.font[' '];
+                    let spaceCharWidth;
+                    if (spaceCharData?.horizAdvX !== undefined) {
+                        // Convert SVG units to canvas pixels, then scale to output
+                        const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                        const canvasScale = (this.canvas.height * 0.7) / fontRange;
+                        spaceCharWidth = spaceCharData.horizAdvX * canvasScale * scale;
+                    } else {
+                        spaceCharWidth = spaceWidth;
+                    }
+                    const spaceWidthTotal = spaceCharWidth + charSpacing;
                     
                     // Check if adding this word exceeds max width
                     if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
@@ -1666,11 +2217,19 @@ class FontCreatorController {
                     let lineWidth = 0;
                     for (let i = 0; i < line.length; i++) {
                         const char = line[i];
-                        const charData = this.font[char];
+                        const normalizedChar = this.normalizeCharacter(char);
+                        const charData = this.font[normalizedChar];
                         if (charData) {
-                            lineWidth += charData.bounds.width * testScale + charSpacing;
+                            const charWidth = charData.horizAdvX !== undefined ? charData.horizAdvX * testScale + charSpacing : charData.bounds.width * testScale + charSpacing;
+                            lineWidth += charWidth;
                         } else {
-                            lineWidth += (char === ' ' ? spaceWidth : testSize * 0.5) + charSpacing;
+                            if (char === ' ') {
+                                const spaceCharData = this.font[' '];
+                                const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? spaceCharData.horizAdvX * testScale + charSpacing : spaceWidth + charSpacing;
+                                lineWidth += spaceCharWidth;
+                            } else {
+                                lineWidth += testSize * 0.5 + charSpacing;
+                            }
                         }
                     }
                     maxLineWidth = Math.max(maxLineWidth, lineWidth);
@@ -1729,15 +2288,30 @@ class FontCreatorController {
 
             for (let i = 0; i < line.length; i++) {
                 const char = line[i];
-                const charData = this.font[char];
+                const normalizedChar = this.normalizeCharacter(char);
+                const charData = this.font[normalizedChar];
 
                 if (!charData) {
                     // Skip undefined characters, but advance X
-                    // Use space width for space character, half output size for others
-                    currentX += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
+                    console.warn(`Character '${char}' (code: ${char.charCodeAt(0)}) not found in font`);
+                    if (char === ' ') {
+                        // Use space character's horizAdvX if available, otherwise use configured spaceWidth
+                        const spaceCharData = this.font[' '];
+                        let spaceCharWidth;
+                        if (spaceCharData?.horizAdvX !== undefined) {
+                            // Convert SVG units to canvas pixels, then scale to output
+                            const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                            const canvasScale = (this.canvas.height * 0.7) / fontRange;
+                            spaceCharWidth = spaceCharData.horizAdvX * canvasScale * scale + charSpacing;
+                        } else {
+                            spaceCharWidth = spaceWidth + charSpacing;
+                        }
+                        currentX += spaceCharWidth;
+                    } else {
+                        currentX += outputSize * 0.5 + charSpacing;
+                    }
                     continue;
                 }
-                
                 // Add comment for the character
                 gcode.push(`; Character: '${char}'`);
 
@@ -1765,9 +2339,14 @@ class FontCreatorController {
                             if (isFirstSegment) {
                                 if (!isAtSafeZ) {
                                     addGCode(`G0 Z${safeZ}`);
+                                    lastFeedRate = null; // Reset on Z move
                                 }
-                                addGCode(`G0 X${startX.toFixed(3)} Y${startY.toFixed(3)} F${feedRate}`);
-                                addGCode(`G1 Z${engraveDepth} F${plungeRate}`);
+                                const feedCode = lastFeedRate !== feedRate ? ` F${feedRate}` : '';
+                                addGCode(`G0 X${startX.toFixed(3)} Y${startY.toFixed(3)}${feedCode}`);
+                                lastFeedRate = feedRate;
+                                const plungeCode = lastFeedRate !== plungeRate ? ` F${plungeRate}` : '';
+                                addGCode(`G1 Z${engraveDepth}${plungeCode}`);
+                                lastFeedRate = plungeRate;
                                 isFirstSegment = false;
                                 isAtSafeZ = false;
                             }
@@ -1786,7 +2365,9 @@ class FontCreatorController {
                             // Y-axis is inverted (canvas Y down, GCode Y up), so flip direction
                             // Canvas clockwise becomes GCode counterclockwise (G3) and vice versa
                             const gcode_cmd = segment.clockwise ? 'G3' : 'G2';
-                            addGCode(`${gcode_cmd} X${endX.toFixed(3)} Y${endY.toFixed(3)} I${i.toFixed(3)} J${j.toFixed(3)} F${feedRate}`);
+                            const feedCode = lastFeedRate !== feedRate ? ` F${feedRate}` : '';
+                            addGCode(`${gcode_cmd} X${endX.toFixed(3)} Y${endY.toFixed(3)} I${i.toFixed(3)} J${j.toFixed(3)}${feedCode}`);
+                            lastFeedRate = feedRate;
                         } else {
                             // Line segment - use G1
                             segment.points.forEach((point, ptIdx) => {
@@ -1796,13 +2377,20 @@ class FontCreatorController {
                                 if (isFirstSegment && ptIdx === 0) {
                                     if (!isAtSafeZ) {
                                         addGCode(`G0 Z${safeZ}`);
+                                        lastFeedRate = null; // Reset on Z move
                                     }
-                                    addGCode(`G0 X${x.toFixed(3)} Y${y.toFixed(3)} F${feedRate}`);
-                                    addGCode(`G1 Z${engraveDepth} F${plungeRate}`);
+                                    const feedCode = lastFeedRate !== feedRate ? ` F${feedRate}` : '';
+                                    addGCode(`G0 X${x.toFixed(3)} Y${y.toFixed(3)}${feedCode}`);
+                                    lastFeedRate = feedRate;
+                                    const plungeCode = lastFeedRate !== plungeRate ? ` F${plungeRate}` : '';
+                                    addGCode(`G1 Z${engraveDepth}${plungeCode}`);
+                                    lastFeedRate = plungeRate;
                                     isFirstSegment = false;
                                     isAtSafeZ = false;
                                 } else {
-                                    addGCode(`G1 X${x.toFixed(3)} Y${y.toFixed(3)} F${feedRate}`);
+                                    const feedCode = lastFeedRate !== feedRate ? ` F${feedRate}` : '';
+                                    addGCode(`G1 X${x.toFixed(3)} Y${y.toFixed(3)}${feedCode}`);
+                                    lastFeedRate = feedRate;
                                 }
                             });
                         }
@@ -1810,6 +2398,7 @@ class FontCreatorController {
                     
                     // Pen up after each stroke
                     addGCode(`G0 Z${safeZ}`);
+                    lastFeedRate = null; // Reset on Z move
                     isAtSafeZ = true;
                 });
 
@@ -1817,15 +2406,21 @@ class FontCreatorController {
                 let spacing = charSpacing;
                 if (i < line.length - 1) {
                     const nextChar = line[i + 1];
-                    const kerningKey = char + nextChar;
-                    if (this.kerning[kerningKey] !== undefined) {
-                        spacing += this.kerning[kerningKey];
-                    }
+                    // SVG spec: k = amount to decrease spacing (positive = closer)
+                    spacing -= this.getKerningAdjustment(char, nextChar);
                 }
                 
                 // Use horizontal advance if available (from SVG font), otherwise use visual width
-                // horizAdvX is stored in canvas units, so we need to scale it to output size
-                const charWidth = charData.horizAdvX !== undefined ? charData.horizAdvX * scale : bounds.width * scale;
+                let charWidthCanvas;
+                if (charData.horizAdvX !== undefined) {
+                    // Convert SVG units to canvas pixels
+                    const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+                    const canvasScale = (this.canvas.height * 0.7) / fontRange;
+                    charWidthCanvas = charData.horizAdvX * canvasScale;
+                } else {
+                    charWidthCanvas = bounds.width; // Already in canvas pixels
+                }
+                const charWidth = charWidthCanvas * scale; // Scale to output size
                 currentX += charWidth + spacing;
             }
 
@@ -1863,6 +2458,10 @@ class FontCreatorController {
         const referenceHeight = this.canvas.height;
         let scale = outputSize / referenceHeight;
         let lineSpacing = outputSize + lineGap;
+        
+        // SVG to canvas scale factor
+        const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+        const svgToCanvasScale = (this.canvas.height * 0.7) / fontRange;
 
         // Calculate text dimensions for canvas size
         const inputLines = text.split('\n');
@@ -1878,16 +2477,19 @@ class FontCreatorController {
                     let wordWidth = 0;
                     for (let i = 0; i < word.length; i++) {
                         const char = word[i];
-                        const charData = this.font[char];
+                        const normalizedChar = this.normalizeCharacter(char);
+                        const charData = this.font[normalizedChar];
                         if (charData) {
-                            const bounds = charData.bounds;
-                            wordWidth += bounds.width * scale + charSpacing;
+                            const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (charData.bounds.width * scale + charSpacing);
+                            wordWidth += charWidth;
                         } else {
                             wordWidth += outputSize * 0.5 + charSpacing;
                         }
                     }
                     
-                    const spaceWidthTotal = spaceWidth + charSpacing;
+                    const spaceCharData = this.font[' '];
+                    const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? (spaceCharData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (spaceWidth + charSpacing);
+                    const spaceWidthTotal = spaceCharWidth;
                     
                     if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
                         wrappedLines.push(currentLine);
@@ -1971,11 +2573,19 @@ class FontCreatorController {
                     let lineWidth = 0;
                     for (let i = 0; i < line.length; i++) {
                         const char = line[i];
-                        const charData = this.font[char];
+                        const normalizedChar = this.normalizeCharacter(char);
+                        const charData = this.font[normalizedChar];
                         if (charData) {
-                            lineWidth += charData.bounds.width * testScale + charSpacing;
+                            const charWidth = charData.horizAdvX !== undefined ? charData.horizAdvX * testScale + charSpacing : charData.bounds.width * testScale + charSpacing;
+                            lineWidth += charWidth;
                         } else {
-                            lineWidth += (char === ' ' ? spaceWidth : testSize * 0.5) + charSpacing;
+                            if (char === ' ') {
+                                const spaceCharData = this.font[' '];
+                                const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? spaceCharData.horizAdvX * testScale + charSpacing : spaceWidth + charSpacing;
+                                lineWidth += spaceCharWidth;
+                            } else {
+                                lineWidth += testSize * 0.5 + charSpacing;
+                            }
                         }
                     }
                     maxLineWidth = Math.max(maxLineWidth, lineWidth);
@@ -2026,9 +2636,16 @@ class FontCreatorController {
                 const char = line[i];
                 const charData = this.font[char];
                 if (charData) {
-                    lineWidth += charData.bounds.width * scale + charSpacing;
+                    const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (charData.bounds.width * scale + charSpacing);
+                    lineWidth += charWidth;
                 } else {
-                    lineWidth += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
+                    if (char === ' ') {
+                        const spaceCharData = this.font[' '];
+                        const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? (spaceCharData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (spaceWidth + charSpacing);
+                        lineWidth += spaceCharWidth;
+                    } else {
+                        lineWidth += outputSize * 0.5 + charSpacing;
+                    }
                 }
             }
             maxLineWidth = Math.max(maxLineWidth, lineWidth);
@@ -2099,7 +2716,9 @@ class FontCreatorController {
                     ctx.stroke();
                 });
 
-                currentX += bounds.width * scale + charSpacing;
+                // Use horizAdvX for character width if available, add charSpacing as additional spacing
+                const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (bounds.width * scale + charSpacing);
+                currentX += charWidth;
             }
 
             // Use smaller spacing for blank lines (baseline to cap height = 50% of output size)
@@ -2141,6 +2760,10 @@ class FontCreatorController {
         const referenceHeight = this.canvas.height;
         let scale = outputSize / referenceHeight;
         
+        // SVG to canvas scale factor
+        const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+        const svgToCanvasScale = (this.canvas.height * 0.7) / fontRange;
+        
         // Calculate actual maximum character height in the font (in canvas coordinates)
         let maxCharHeight = 0;
         for (const char in this.font) {
@@ -2174,14 +2797,16 @@ class FontCreatorController {
                         const char = word[i];
                         const charData = this.font[char];
                         if (charData) {
-                            const bounds = charData.bounds;
-                            wordWidth += bounds.width * scale + charSpacing;
+                            const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (charData.bounds.width * scale + charSpacing);
+                            wordWidth += charWidth;
                         } else {
                             wordWidth += outputSize * 0.5 + charSpacing;
                         }
                     }
                     
-                    const spaceWidthTotal = spaceWidth + charSpacing;
+                    const spaceCharData = this.font[' '];
+                    const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? (spaceCharData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (spaceWidth + charSpacing);
+                    const spaceWidthTotal = spaceCharWidth;
                     
                     if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
                         wrappedLines.push(currentLine);
@@ -2310,9 +2935,16 @@ class FontCreatorController {
                 const char = line[i];
                 const charData = this.font[char];
                 if (charData) {
-                    lineWidth += charData.bounds.width * scale + charSpacing;
+                    const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (charData.bounds.width * scale + charSpacing);
+                    lineWidth += charWidth;
                 } else {
-                    lineWidth += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
+                    if (char === ' ') {
+                        const spaceCharData = this.font[' '];
+                        const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? (spaceCharData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (spaceWidth + charSpacing);
+                        lineWidth += spaceCharWidth;
+                    } else {
+                        lineWidth += outputSize * 0.5 + charSpacing;
+                    }
                 }
             }
             maxLineWidth = Math.max(maxLineWidth, lineWidth);
@@ -2347,7 +2979,8 @@ class FontCreatorController {
             
             for (let i = 0; i < line.length; i++) {
                 const char = line[i];
-                const charData = this.font[char];
+                const normalizedChar = this.normalizeCharacter(char);
+                const charData = this.font[normalizedChar];
 
                 if (!charData) {
                     currentX += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
@@ -2373,7 +3006,8 @@ class FontCreatorController {
                     svg += `    <path d="${pathData}"/>\n`;
                 });
 
-                currentX += bounds.width * scale + charSpacing;
+                const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (bounds.width * scale + charSpacing);
+                currentX += charWidth;
             }
 
             const lineAdvance = line.length === 0 ? outputSize * 0.5 : lineSpacing;
@@ -2416,6 +3050,10 @@ class FontCreatorController {
         const referenceHeight = this.canvas.height;
         let scale = outputSize / referenceHeight;
         
+        // SVG to canvas scale factor
+        const fontRange = this.fontMetrics.ascent - this.fontMetrics.descent;
+        const svgToCanvasScale = (this.canvas.height * 0.7) / fontRange;
+        
         // Calculate actual maximum character height in the font (in canvas coordinates)
         let maxCharHeight = 0;
         for (const char in this.font) {
@@ -2448,14 +3086,16 @@ class FontCreatorController {
                         const char = word[i];
                         const charData = this.font[char];
                         if (charData) {
-                            const bounds = charData.bounds;
-                            wordWidth += bounds.width * scale + charSpacing;
+                            const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (charData.bounds.width * scale + charSpacing);
+                            wordWidth += charWidth;
                         } else {
                             wordWidth += outputSize * 0.5 + charSpacing;
                         }
                     }
                     
-                    const spaceWidthTotal = spaceWidth + charSpacing;
+                    const spaceCharData = this.font[' '];
+                    const spaceCharWidth = spaceCharData?.horizAdvX !== undefined ? (spaceCharData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (spaceWidth + charSpacing);
+                    const spaceWidthTotal = spaceCharWidth;
                     
                     if (currentLine.length > 0 && currentWidth + spaceWidthTotal + wordWidth > maxWidth) {
                         wrappedLines.push(currentLine);
@@ -2605,7 +3245,8 @@ class FontCreatorController {
             
             for (let i = 0; i < line.length; i++) {
                 const char = line[i];
-                const charData = this.font[char];
+                const normalizedChar = this.normalizeCharacter(char);
+                const charData = this.font[normalizedChar];
 
                 if (!charData) {
                     currentX += (char === ' ' ? spaceWidth : outputSize * 0.5) + charSpacing;
@@ -2634,7 +3275,8 @@ class FontCreatorController {
                     });
                 });
 
-                currentX += bounds.width * scale + charSpacing;
+                const charWidth = charData.horizAdvX !== undefined ? (charData.horizAdvX * svgToCanvasScale * scale + charSpacing) : (bounds.width * scale + charSpacing);
+                currentX += charWidth;
             }
 
             const lineAdvance = line.length === 0 ? outputSize * 0.5 : lineSpacing;
@@ -2722,24 +3364,26 @@ class FontCreatorController {
             if (!charData || !charData.strokes || charData.strokes.length === 0) continue;
             
             const bounds = charData.bounds;
-            // Add side bearings (spacing) to character advance width
-            const horizAdvX = Math.round(bounds.width * scale + sideBearings);
+            // Use stored horizAdvX if available, otherwise calculate from bounds
+            const horizAdvX = charData.horizAdvX !== undefined 
+                ? Math.round(charData.horizAdvX) 
+                : Math.round(bounds.width * scale + sideBearings);
             
             // Build path data for this glyph
             let pathData = '';
             charData.strokes.forEach(stroke => {
                 if (stroke.length < 2) return;
                 
-                // Convert first point
+                // Convert first point (preserve left bearing - don't subtract bounds.minX)
                 const firstPoint = stroke[0];
-                const x0 = (firstPoint.x - bounds.minX) * scale;
+                const x0 = firstPoint.x * scale;
                 // Flip Y axis: SVG fonts use bottom-left origin, canvas uses top-left
                 const y0 = (canvasHeight - firstPoint.y) * scale;
                 pathData += `M ${x0.toFixed(1)} ${y0.toFixed(1)} `;
                 
                 // Convert remaining points
                 for (let i = 1; i < stroke.length; i++) {
-                    const x = (stroke[i].x - bounds.minX) * scale;
+                    const x = stroke[i].x * scale;
                     const y = (canvasHeight - stroke[i].y) * scale;
                     pathData += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
                 }
@@ -2755,17 +3399,24 @@ class FontCreatorController {
             svg += `      <glyph unicode="${unicodeAttr}" horiz-adv-x="${horizAdvX}" d="${pathData.trim()}"/>\n`;
         }
         
-        // Add kerning pairs if any exist
-        if (Object.keys(this.kerning).length > 0) {
-            for (const pair in this.kerning) {
-                if (pair.length === 2) {
-                    const u1 = pair[0].replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-                    const u2 = pair[1].replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-                    // Kerning value needs to be scaled and negated (SVG font kerning convention)
-                    const kernValue = Math.round(-this.kerning[pair] * scale);
+        // Add kerning pairs if any exist (SVG 1.1 hkern elements)
+        if (this.kerning.length > 0) {
+            this.kerning.forEach(rule => {
+                // Scale kerning value to font units (k = amount to decrease spacing per SVG spec)
+                const kernValue = Math.round(rule.k * scale);
+                
+                if (rule.type === 'unicode') {
+                    // Escape XML special characters
+                    const u1 = this.escapeXML(rule.u1);
+                    const u2 = this.escapeXML(rule.u2);
                     svg += `      <hkern u1="${u1}" u2="${u2}" k="${kernValue}"/>\n`;
+                } else {
+                    // Glyph name based kerning
+                    const g1 = this.escapeXML(rule.g1);
+                    const g2 = this.escapeXML(rule.g2);
+                    svg += `      <hkern g1="${g1}" g2="${g2}" k="${kernValue}"/>\n`;
                 }
-            }
+            });
         }
         
         svg += `    </font>\n`;
@@ -2784,6 +3435,15 @@ class FontCreatorController {
         this.updateStatus('SVG Font exported! Note: SVG fonts work in Safari, Inkscape, and Illustrator.');
     }
 
+    // Escape XML special characters for attributes
+    escapeXML(str) {
+        return str.replace(/&/g, '&amp;')
+                  .replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;')
+                  .replace(/'/g, '&apos;');
+    }
+
     // Toggle typography guide lines
     toggleGuides() {
         this.showGuides = !this.showGuides;
@@ -2798,7 +3458,7 @@ class FontCreatorController {
 
     // Reset guide positions to defaults
     resetGuidePositions() {
-        this.guidePositions = { ascent: 15, capHeight: 25, xHeight: 45, baseline: 75, descender: 85 };
+        this.guidePositions = { ascent: 800, capHeight: 700, xHeight: 500, baseline: 0, descent: -200 };
         this.updateGuidePositionInputs();
         this.render();
     }
@@ -2809,23 +3469,47 @@ class FontCreatorController {
         document.getElementById('cap-height-pos').value = this.guidePositions.capHeight;
         document.getElementById('x-height-pos').value = this.guidePositions.xHeight;
         document.getElementById('baseline-pos').value = this.guidePositions.baseline;
-        document.getElementById('descender-pos').value = this.guidePositions.descender;
+        document.getElementById('descent-pos').value = this.guidePositions.descent;
     }
 
-    // Add kerning pair
+    // Add kerning pair (SVG 1.1 hkern format)
     addKerning() {
-        const pair = document.getElementById('kerning-pair').value;
+        const u1 = document.getElementById('kerning-u1').value.trim();
+        const u2 = document.getElementById('kerning-u2').value.trim();
+        const type = document.getElementById('kerning-type').value;
         const value = parseFloat(document.getElementById('kerning-value').value);
         
-        if (pair.length !== 2) {
-            alert('Please enter exactly 2 characters');
+        if (!u1 || !u2) {
+            alert('Please specify both first and second glyphs');
             return;
         }
         
-        this.kerning[pair] = value;
+        if (isNaN(value)) {
+            alert('Please enter a valid kerning adjustment value');
+            return;
+        }
+        
+        // Create kerning rule following SVG 1.1 hkern spec
+        const kernRule = {
+            type: type,
+            k: value
+        };
+        
+        if (type === 'unicode') {
+            kernRule.u1 = u1;
+            kernRule.u2 = u2;
+        } else {
+            kernRule.g1 = u1;
+            kernRule.g2 = u2;
+        }
+        
+        this.kerning.push(kernRule);
         this.updateKerningList();
         this.saveToLocalStorage();
-        document.getElementById('kerning-pair').value = '';
+        
+        // Clear inputs
+        document.getElementById('kerning-u1').value = '';
+        document.getElementById('kerning-u2').value = '';
     }
 
     // Update kerning list UI
@@ -2833,19 +3517,33 @@ class FontCreatorController {
         const list = document.getElementById('kerning-list');
         list.innerHTML = '';
         
-        Object.entries(this.kerning).forEach(([pair, value]) => {
+        // Ensure kerning is an array
+        if (!Array.isArray(this.kerning)) {
+            this.kerning = [];
+            return;
+        }
+        
+        this.kerning.forEach((rule, index) => {
             const item = document.createElement('div');
             item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 5px; border-bottom: 1px solid var(--border-color);';
+            
+            const first = rule.type === 'unicode' ? rule.u1 : rule.g1;
+            const second = rule.type === 'unicode' ? rule.u2 : rule.g2;
+            const typeLabel = rule.type === 'unicode' ? 'u' : 'g';
+            
+            const kSign = rule.k > 0 ? '+' : '';
+            const kLabel = rule.k > 0 ? 'closer' : 'apart';
             item.innerHTML = `
-                <span><strong>${pair}</strong>: ${value}mm</span>
-                <button onclick="fontCreatorController.removeKerning('${pair}')" style="padding: 2px 8px; font-size: 11px;">✖</button>
+                <span style="flex: 1;"><strong>${first}</strong> + <strong>${second}</strong> <em style="color: var(--secondary-color);">(${typeLabel})</em>: k=${kSign}${rule.k} <em style="opacity: 0.7;">(${kLabel})</em></span>
+                <button onclick="fontCreatorController.removeKerning(${index})" style="padding: 2px 8px; font-size: 11px;">✖</button>
             `;
             list.appendChild(item);
         });
     }
 
     // Remove kerning pair
-    removeKerning(pair) {
+    removeKerning(index) {
+        this.kerning.splice(index, 1);
         delete this.kerning[pair];
         this.updateKerningList();
         this.saveToLocalStorage();
@@ -2855,5 +3553,16 @@ class FontCreatorController {
     updateStatus(message) {
         const statusEl = document.getElementById('status');
         if (statusEl) statusEl.textContent = message;
+    }
+
+    setupPanelToggle() {
+        const toggleBtn = document.getElementById('toggle-left-panel');
+        const leftPanel = document.querySelector('.left-panel');
+        
+        if (!toggleBtn || !leftPanel) return;
+        
+        toggleBtn.addEventListener('click', () => {
+            leftPanel.classList.toggle('collapsed');
+        });
     }
 }

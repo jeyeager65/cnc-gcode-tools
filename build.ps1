@@ -34,8 +34,9 @@ Write-Host "Version: $version" -ForegroundColor Green
 $builds = @(
     @{
         Name = "FluidNC Extension"
-        SourceHtml = "src/fluidnc.html"
+        SourceHtml = "src/gcodeviewer-fluidnc.html"
         OutputName = "gcodeviewer"
+        DeleteHtmlAfterGzip = $true
         JsFiles = @(
             "src/js/fluidnc-api.js",
             "src/js/parser.js",
@@ -59,8 +60,9 @@ $builds = @(
     },
     @{
         Name = "Standalone Version"
-        SourceHtml = "src/index.html"
-        OutputName = "standalone"
+        SourceHtml = "src/gcodeviewer.html"
+        OutputName = "gcodeviewer"
+        SkipGzip = $true
         JsFiles = @(
             "src/js/parser.js",
             "src/js/camera.js",
@@ -80,8 +82,9 @@ $builds = @(
     },
     @{
         Name = "Font Creator"
-        SourceHtml = "src/font-creator.html"
+        SourceHtml = "src/fontcreator.html"
         OutputName = "fontcreator"
+        SkipGzip = $true
         JsFiles = @(
             "src/js/parser.js",
             "src/js/camera.js",
@@ -182,30 +185,42 @@ foreach ($build in $builds) {
 
     $minifiedSize = (Get-Item $outputHtml).Length
 
-    # Compress with gzip
-    Write-Host "Compressing with gzip..." -ForegroundColor Cyan
-    $compressedFile = "$outputHtml.gz"
+    # Compress with gzip (only for FluidNC extension)
+    if (-not $build.SkipGzip) {
+        Write-Host "Compressing with gzip..." -ForegroundColor Cyan
+        $compressedFile = "$outputHtml.gz"
 
-    $fileStream = [System.IO.File]::OpenRead($outputHtml)
-    $outputStream = [System.IO.File]::Create($compressedFile)
-    $gzipStream = New-Object System.IO.Compression.GZipStream($outputStream, [System.IO.Compression.CompressionMode]::Compress)
+        $fileStream = [System.IO.File]::OpenRead($outputHtml)
+        $outputStream = [System.IO.File]::Create($compressedFile)
+        $gzipStream = New-Object System.IO.Compression.GZipStream($outputStream, [System.IO.Compression.CompressionMode]::Compress)
 
-    $fileStream.CopyTo($gzipStream)
+        $fileStream.CopyTo($gzipStream)
 
-    $gzipStream.Close()
-    $outputStream.Close()
-    $fileStream.Close()
+        $gzipStream.Close()
+        $outputStream.Close()
+        $fileStream.Close()
 
-    $gzipSize = (Get-Item $compressedFile).Length
-    $compressionRatio = [math]::Round(($gzipSize / $minifiedSize) * 100, 2)
+        $gzipSize = (Get-Item $compressedFile).Length
+        $compressionRatio = [math]::Round(($gzipSize / $minifiedSize) * 100, 2)
+        
+        # Delete the .html file if requested (for FluidNC - we only want the .gz)
+        if ($build.DeleteHtmlAfterGzip) {
+            Remove-Item $outputHtml -ErrorAction SilentlyContinue
+            Write-Host "Deleted $outputHtml (keeping only .gz)" -ForegroundColor Yellow
+        }
+    }
 
     # Report
     Write-Host "`n$($build.Name) Build Complete!" -ForegroundColor Green
     Write-Host "  Output: $outputHtml" -ForegroundColor Yellow
     Write-Host "  Original size: $([math]::Round($originalSize/1KB, 2)) KB"
     Write-Host "  Minified size: $([math]::Round($minifiedSize/1KB, 2)) KB"
-    Write-Host "  Compressed size: $([math]::Round($gzipSize/1KB, 2)) KB (gzip)"
-    Write-Host "  Compression ratio: $compressionRatio%"
+    
+    # Only show compression info if gzipped
+    if (-not $build.SkipGzip) {
+        Write-Host "  Compressed size: $([math]::Round($gzipSize/1KB, 2)) KB (gzip)"
+        Write-Host "  Compression ratio: $compressionRatio%"
+    }
 
     # Clean up temp file
     Remove-Item $minJsFile -ErrorAction SilentlyContinue
@@ -217,6 +232,6 @@ Write-Host "`nAll builds completed successfully!" -ForegroundColor Green
 Write-Host "Creating .nojekyll file..." -ForegroundColor Cyan
 New-Item -Path "dist/.nojekyll" -ItemType File -Force | Out-Null
 
-# Copy landing page to index.html for GitHub Pages
-Write-Host "Creating index.html landing page for GitHub Pages..." -ForegroundColor Cyan
-Copy-Item -Path "src/landing.html" -Destination "dist/index.html"
+# Copy landing page to dist for GitHub Pages
+Write-Host "Copying index.html landing page for GitHub Pages..." -ForegroundColor Cyan
+Copy-Item -Path "src/index.html" -Destination "dist/index.html"

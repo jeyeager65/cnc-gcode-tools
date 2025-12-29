@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CNC GCode Viewer {{VERSION}}</title>
+    <link rel="stylesheet" href="css/common.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📐 CNC GCode Viewer</h1>
+            <div class="header-controls">
+                <a href="https://github.com/jeyeager65/cnc-gcode-tools" target="_blank">
+                    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 6px;">
+                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                    </svg>
+                    GitHub
+                </a>
+            </div>
+        </header>
+
+        <div class="mobile-tabs">
+            <div class="mobile-tabs-nav">
+                <button class="mobile-tab-button active" data-tab="settings">⚙️ Settings</button>
+                <button class="mobile-tab-button" data-tab="display">📊 Display</button>
+                <button class="mobile-tab-button" data-tab="gcode">📝 GCode</button>
+            </div>
+        </div>
+
+        <aside class="left-sidebar mobile-tab-content gcode-hidden" data-tab-content="gcode">
+            <div class="panel" id="gcode-panel" style="visibility: hidden; position: absolute;">
+                <h3>GCode <span id="gcode-line-indicator" style="font-size: 12px; opacity: 0.7;"></span></h3>
+                <div id="gcode-container">
+                    <div id="gcode-content">
+                        <div class="gcode-line-numbers" id="gcode-line-numbers"></div>
+                        <div class="gcode-code" id="gcode-display"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Welcome content shown before file is loaded -->
+            <div class="panel" id="gcode-welcome" style="display: block; margin: 20px; padding: 20px;">
+                <div style="margin-top: 0;">
+                    <h3>Getting Started</h3>
+                    <ol style="font-size: 14px; line-height: 1.8; padding-left: 20px; opacity: 0.9;">
+                        <li>Drop a GCode file in the upload area or click to browse</li>
+                        <li>Switch between 2D and 3D views using the toggle button</li>
+                        <li>Use animation controls to step through execution</li>
+                        <li>Adjust layer filtering to focus on specific Z-heights</li>
+                    </ol>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h3>Features</h3>
+                    <ul style="font-size: 14px; line-height: 1.8; list-style: none; padding-left: 0; opacity: 0.9;">
+                        <li>✓ Multi-tool support with color-coded paths</li>
+                        <li>✓ Animation with adjustable speed</li>
+                        <li>✓ Layer filtering by Z-height</li>
+                        <li>✓ Real-time statistics (time, dimensions, tool changes)</li>
+                        <li>✓ 2D and 3D visualization modes</li>
+                        <li>✓ Touch-friendly mobile interface</li>
+                    </ul>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h3>Navigation</h3>
+                    <ul style="font-size: 14px; line-height: 1.8; list-style: circle; padding-left: 20px; opacity: 0.9;">
+                        <li><strong>2D View:</strong> Left or right click drag to pan, scroll to zoom</li>
+                        <li><strong>3D View:</strong> Left click and drag to rotate, right click and drag to pan, scroll to zoom</li>
+                        <li><strong>Mobile:</strong> One finger drag to rotate, two finger drag to pan, pinch to zoom</li>
+                        <li><strong>Reset:</strong> Click "Reset View" to re-center</li>
+                    </ul>
+                </div>
+            </div>
+        </aside>
+
+        <div class="canvas-container mobile-tab-content" data-tab-content="display">
+            <div class="canvas-overlay-controls">
+                <button id="btn-toggle-view">3D View</button>
+                <button id="btn-reset-view" disabled>Reset View</button>
+            </div>
+            <canvas id="canvas2d"></canvas>
+            <canvas id="canvas3d" class="hidden"></canvas>
+            <canvas id="canvas3d-overlay" class="hidden"></canvas>
+        </div>
+
+        <aside class="sidebar mobile-tab-content active" data-tab-content="settings">
+            <div class="panel">
+                <h3>Load File</h3>
+                <div class="file-upload-zone" id="upload-zone">
+                    <p>📁 Drop GCode file here<br>or click to browse</p>
+                    <input type="file" id="file-input" accept=".nc,.gcode,.txt">
+                </div>
+                <div class="progress-bar hidden" id="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Segments</div>
+                        <div class="stat-value" id="stat-lines">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Est. Time</div>
+                        <div class="stat-value" id="stat-time">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">X Range</div>
+                        <div class="stat-value" id="stat-x">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Y Range</div>
+                        <div class="stat-value" id="stat-y">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Z Range</div>
+                        <div class="stat-value" id="stat-z">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel" id="tool-panel" style="display: none;">
+                <h3>Tools</h3>
+                <div id="tool-list" style="max-height: 400px; overflow-y: auto;">
+                    <!-- Tool controls will be added dynamically -->
+                </div>
+            </div>
+
+            <div class="panel" id="rapid-moves-panel" style="display: none;">
+                <h3>Rapid Moves (G0)</h3>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--canvas-bg); border-radius: 4px;">
+                    <input type="checkbox" id="rapid-moves-visible" checked>
+                    <input type="color" id="rapid-move-color" value="#999999" style="width: 32px; height: 24px; border: none; cursor: pointer;">
+                    <label for="rapid-moves-visible" style="flex: 1; font-size: 13px; cursor: pointer;">Show Travel Moves</label>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>View Controls</h3>
+                <div class="layer-controls">
+                    <div style="margin-bottom: 10px;">
+                        <label style="font-size: 12px; display: block; margin-bottom: 5px;">Theme</label>
+                        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                            <button id="theme-light" style="flex: 1; padding: 8px;">☀️ Light</button>
+                            <button id="theme-dark" style="flex: 1; padding: 8px;">🌙 Dark</button>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="font-size: 12px; display: block; margin-bottom: 5px;">Zoom</label>
+                        <input type="range" id="zoom-slider" min="0.1" max="10" step="0.1" value="1" style="width: 100%;">
+                        <div style="text-align: center; font-size: 11px; margin-top: 5px;">
+                            <span id="zoom-value">100%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel" id="animation-panel" style="display: none;">
+                <h3>Animation</h3>
+                <div class="animation-controls">
+                    <div class="controls-row">
+                        <button id="btn-play">Play</button>
+                        <button id="btn-reset">Reset</button>
+                    </div>
+                    <div class="controls-row">
+                        <button id="btn-prev">◀ Prev</button>
+                        <button id="btn-next">Next ▶</button>
+                    </div>
+                    <div>
+                        <label>Speed: <span id="speed-label">1x</span></label>
+                        <input type="range" id="speed-slider" min="-10" max="10" value="0" step="1">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label style="font-size: 12px; display: block; margin-bottom: 5px;">Segment: <span id="current-line">0</span> / <span id="total-lines">0</span></label>
+                        <div style="font-size: 11px; opacity: 0.7; margin-bottom: 5px;">File Line: <span id="current-file-line">-</span></div>
+                        <input type="range" id="line-slider" min="0" max="0" step="1" value="0" style="width: 100%;">
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Layer Filter</h3>
+                <div class="layer-controls">
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px;">
+                        <span>Min: <span id="layer-min-value">-</span></span>
+                        <span>Max: <span id="layer-max-value">-</span></span>
+                    </div>
+                    <div class="dual-range-slider">
+                        <div class="range-highlight" id="layer-range-highlight"></div>
+                        <input type="range" id="layer-slider-min" class="range-min" step="0.1">
+                        <input type="range" id="layer-slider-max" class="range-max" step="0.1">
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>3D Grid</h3>
+                <div class="layer-controls">
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="grid-enabled" checked>
+                            <span>Show Grid</span>
+                        </label>
+                    </div>
+                    <div class="layer-inputs">
+                        <div>
+                            <label style="font-size: 12px;">Width (X)</label>
+                            <input type="number" id="grid-width" step="10" value="1200" min="0">
+                        </div>
+                        <div>
+                            <label style="font-size: 12px;">Height (Y)</label>
+                            <input type="number" id="grid-height" step="10" value="2400" min="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="privacy-notice">
+                🔒 All processing happens locally in your browser.<br>No data is transmitted.
+            </div>
+        </aside>
+
+        <footer>
+            <div class="coordinate-display" id="coordinates">X: - Y: - Z: -</div>
+            <div>Version {{VERSION}}</div>
+        </footer>
+    </div>
+
+    <script src="js/parser.js"></script>
+    <script src="js/camera.js"></script>
+    <script src="js/renderer2d.js"></script>
+    <script src="js/renderer3d.js"></script>
+    <script src="js/animator.js"></script>
+    <script src="js/controller.js"></script>
+</body>
+</html>

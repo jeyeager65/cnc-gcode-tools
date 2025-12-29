@@ -40,26 +40,20 @@ jobs:
         id: sizes
         run: |
           SOURCE_SIZE=$(du -sh src | cut -f1)
-          STANDALONE_SIZE=$(stat -c%s dist/standalone.html | numfmt --to=iec-i --suffix=B)
-          STANDALONE_GZ_SIZE=$(stat -c%s dist/standalone.html.gz | numfmt --to=iec-i --suffix=B)
-          FLUIDNC_SIZE=$(stat -c%s dist/gcodeviewer.html | numfmt --to=iec-i --suffix=B)
-          FLUIDNC_GZ_SIZE=$(stat -c%s dist/gcodeviewer.html.gz | numfmt --to=iec-i --suffix=B)
+          GCODEVIEWER_SIZE=$(stat -c%s dist/gcodeviewer.html | numfmt --to=iec-i --suffix=B)
+          GCODEVIEWER_GZ_SIZE=$(stat -c%s dist/gcodeviewer.html.gz | numfmt --to=iec-i --suffix=B)
           FONTCREATOR_SIZE=$(stat -c%s dist/fontcreator.html | numfmt --to=iec-i --suffix=B)
-          FONTCREATOR_GZ_SIZE=$(stat -c%s dist/fontcreator.html.gz | numfmt --to=iec-i --suffix=B)
           
           echo "SOURCE_SIZE=${SOURCE_SIZE}" >> $GITHUB_OUTPUT
-          echo "STANDALONE_SIZE=${STANDALONE_SIZE}" >> $GITHUB_OUTPUT
-          echo "STANDALONE_GZ_SIZE=${STANDALONE_GZ_SIZE}" >> $GITHUB_OUTPUT
-          echo "FLUIDNC_SIZE=${FLUIDNC_SIZE}" >> $GITHUB_OUTPUT
-          echo "FLUIDNC_GZ_SIZE=${FLUIDNC_GZ_SIZE}" >> $GITHUB_OUTPUT
+          echo "GCODEVIEWER_SIZE=${GCODEVIEWER_SIZE}" >> $GITHUB_OUTPUT
+          echo "GCODEVIEWER_GZ_SIZE=${GCODEVIEWER_GZ_SIZE}" >> $GITHUB_OUTPUT
           echo "FONTCREATOR_SIZE=${FONTCREATOR_SIZE}" >> $GITHUB_OUTPUT
-          echo "FONTCREATOR_GZ_SIZE=${FONTCREATOR_GZ_SIZE}" >> $GITHUB_OUTPUT
           
           echo "File Sizes:"
           echo "  Source: ${SOURCE_SIZE}"
-          echo "  Standalone: ${STANDALONE_SIZE} (${STANDALONE_GZ_SIZE} gzipped)"
-          echo "  FluidNC: ${FLUIDNC_SIZE} (${FLUIDNC_GZ_SIZE} gzipped)"
-          echo "  Font Creator: ${FONTCREATOR_SIZE} (${FONTCREATOR_GZ_SIZE} gzipped)"
+          echo "  GCode Viewer: ${GCODEVIEWER_SIZE}"
+          echo "  FluidNC Extension: ${GCODEVIEWER_GZ_SIZE} (gzipped)"
+          echo "  Font Creator: ${FONTCREATOR_SIZE}"
       
       - name: Generate changelog
         id: changelog
@@ -117,31 +111,28 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/standalone.html
-            dist/standalone.html.gz
             dist/gcodeviewer.html
             dist/gcodeviewer.html.gz
             dist/fontcreator.html
-            dist/fontcreator.html.gz
             dist/CHANGELOG.md
           body: |
-            # CNC GCode Viewer ${{ steps.version.outputs.VERSION }}
+            # CNC GCode Tools ${{ steps.version.outputs.VERSION }}
             
             ${{ steps.changelog.outputs.CHANGELOG }}
             
             ## File Sizes
             - **Source**: ${{ steps.sizes.outputs.SOURCE_SIZE }}
-            - **Standalone**: ${{ steps.sizes.outputs.STANDALONE_SIZE }} (${{ steps.sizes.outputs.STANDALONE_GZ_SIZE }} gzipped)
-            - **FluidNC**: ${{ steps.sizes.outputs.FLUIDNC_SIZE }} (${{ steps.sizes.outputs.FLUIDNC_GZ_SIZE }} gzipped)
-            - **Font Creator**: ${{ steps.sizes.outputs.FONTCREATOR_SIZE }} (${{ steps.sizes.outputs.FONTCREATOR_GZ_SIZE }} gzipped)
+            - **GCode Viewer**: ${{ steps.sizes.outputs.GCODEVIEWER_SIZE }}
+            - **FluidNC Extension**: ${{ steps.sizes.outputs.GCODEVIEWER_GZ_SIZE }} (gzipped)
+            - **Font Creator**: ${{ steps.sizes.outputs.FONTCREATOR_SIZE }}
             
             ## Deployment Instructions
 
             ## Hosted Version
-            Try it online: [CNC GCode Viewer](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/)
+            Try it online: [CNC GCode Tools](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/)
             
             ### For FluidNC WebUI v3:
-            1. Download `gcodeviewer.html.gz`
+            1. Download `gcodeviewer.html.gz` (compressed for embedded deployment)
             2. Upload to Flash on your device via web interface or:
                ```bash
                curl -F "file=@gcodeviewer.html.gz" http://your-device-ip/files
@@ -153,7 +144,7 @@ jobs:
                - Refresh time - 0
             
             ### For local use:
-            1. Download `standalone.html`
+            1. Download `gcodeviewer.html` (standalone viewer)
             2. Open directly in a modern browser
             3. No server required - runs completely offline            
             

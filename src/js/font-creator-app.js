@@ -17,6 +17,7 @@ window.addEventListener('DOMContentLoaded', () => {
     fontCreatorController.setupCharacterSet();
     fontCreatorController.setupFontCreatorControls();
     fontCreatorController.setupTextToGCodeControls();
+    fontCreatorController.setupPanelToggle();
     fontCreatorController.loadFromLocalStorage();
     fontCreatorController.render();
     

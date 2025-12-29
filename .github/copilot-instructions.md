@@ -23,24 +23,33 @@ All classes are **globally scoped** (no modules/imports) for single-file HTML in
 **Extensions:**
 - `fluidnc-api.js` → `FluidNCAPI` - REST client for ESP32/FluidNC devices
 - `fluidnc-controller.js` → `FluidNCController` - Extends `Controller`, adds SD card browser
-- `font-creator-controller.js` → `FontCreatorController` - Character glyph editor with path simplification
+- `font-creator-controller.js` → `FontCreatorController` - Character glyph editor with canvas drawing, arc detection, Douglas-Peucker path simplification, kerning management
 - `font-creator-app.js` - App initialization for Font Creator (no class, just init code)
+
+**Font Creator Features:**
+- **Canvas-based drawing:** Click-drag to draw character strokes on 600x600 grid
+- **Arc detection:** Converts freehand curves to G2/G3 arc commands (min radius 5mm)
+- **Path simplification:** Douglas-Peucker algorithm with configurable tolerance
+- **Font metrics:** SVG font units (1000 units/em) with ascent/descent/cap-height guides
+- **Kerning editor:** Pair-based spacing adjustments (e.g., "AV": -2)
+- **Text-to-GCode:** Generates CNC toolpaths with user-defined parameters (feed rate, plunge depth, etc.)
+- **Font import/export:** JSON format with character strokes, metrics, and kerning data
 
 **Data flow:** File → `GCodeParser.parseFile()` → `segments[]` → `Controller.loadSegments()` → `Renderer*.render()` → Canvas
 
 ### Build System (`build.ps1`)
 PowerShell script that creates three single-file HTML distributions:
-1. **Standalone** (`dist/standalone.html`) - Local file viewer, includes: parser, camera, renderer2d, renderer3d, animator, controller
-2. **FluidNC** (`dist/gcodeviewer.html`) - ESP32 device integration, adds: fluidnc-api, fluidnc-controller
+1. **Standalone** (`dist/gcodeviewer.html`) - Local file viewer, includes: parser, camera, renderer2d, renderer3d, animator, controller
+2. **FluidNC** (`dist/gcodeviewer.html`) - ESP32 device integration, adds: fluidnc-api, fluidnc-controller (with `.gz` version)
 3. **Font Creator** (`dist/fontcreator.html`) - Font design tool, adds: font-creator-controller, font-creator-app
 
 **Build process:**
-1. Reads HTML template from `src/{index,fluidnc,font-creator}.html`
+1. Reads HTML template from `src/gcodeviewer{-fluidnc,}.html` or `src/fontcreator.html`
 2. Inlines CSS from `src/css/common.css` (+ `fluidnc.css`/`font-creator.css` if applicable) into `<style>` tags
 3. Concatenates JS files in dependency order (see `$builds` array in `build.ps1`)
 4. Minifies JS with Terser (3 passes: `--compress passes=3`)
-5. Strips HTML comments/whitespace
-6. Creates `.gz` versions for embedded deployment
+5. Removes CSS/HTML comments and strips whitespace
+6. Creates `.gz` versions for embedded deployment (FluidNC only)
 
 **Run:** `.\build.ps1` (requires `npm install -g terser`)
 **Output:** `dist/*.html` + `dist/*.html.gz` (check file sizes in console output)
@@ -155,7 +164,7 @@ Instantiate `FluidNCController` instead of `Controller` in `fluidnc.html`.
 
 ### Local Testing
 1. Edit files in `src/` directory (changes reflected immediately in browser)
-2. Open `src/index.html` or `src/fluidnc.html` directly in browser (no server needed for standalone)
+2. Open `src/gcodeviewer.html` or `src/gcodeviewer-fluidnc.html` directly in browser (no server needed for standalone)
 3. For FluidNC features, use local server: `python -m http.server 8000` or PowerShell's `Start-Process`
 
 ### Build Testing
@@ -172,6 +181,7 @@ curl -F "file=@dist/gcodeviewer.html.gz" http://YOUR-DEVICE-IP/files
 ```
 
 ### Manual Test Checklist
+**GCode Viewer (Standalone/FluidNC):**
 - [ ] Load example files (`examples/simple_square.nc`, `circle_arc.nc`, `3d_toolpath.nc`)
 - [ ] Toggle 2D/3D view (double-check WebGL initialization in console)
 - [ ] Pan/zoom/rotate in both views
@@ -183,6 +193,18 @@ curl -F "file=@dist/gcodeviewer.html.gz" http://YOUR-DEVICE-IP/files
 - [ ] Screenshot export (Canvas 2D `toDataURL()` functionality)
 - [ ] Touch controls on mobile/tablet (pinch zoom, two-finger pan)
 
+**Font Creator Specific:**
+- [ ] Draw character strokes on canvas (mouse + touch)
+- [ ] Undo/redo functionality
+- [ ] Clear canvas and character management
+- [ ] Arc detection (toggle on/off, adjust min radius)
+- [ ] Path simplification (Douglas-Peucker tolerance slider)
+- [ ] Font metrics guide lines (ascent, cap height, baseline, descent)
+- [ ] Preview text with current font
+- [ ] Generate GCode from text (verify G-code syntax)
+- [ ] Font import/export (JSON format with `.json` extension)
+- [ ] Kerning pairs editor (add/edit/delete pairs)
+
 ## Common Tasks
 
 ### Adding a GCode Command
@@ -191,10 +213,17 @@ curl -F "file=@dist/gcodeviewer.html.gz" http://YOUR-DEVICE-IP/files
 3. Update `Supported GCode Commands` table in `README.md`
 
 ### Adding a UI Control
-1. Add HTML element to `src/index.html` or `src/fluidnc.html`
+1. Add HTML element to `src/gcodeviewer.html` or `src/gcodeviewer-fluidnc.html` or `src/fontcreator.html`
 2. Style in `src/css/common.css` (use CSS custom properties for colors)
-3. Add event listener in `Controller.setupEventListeners()`
+3. Add event listener in `Controller.setupEventListeners()` (or `FluidNCController`/`FontCreatorController`)
 4. Update state and trigger re-render: `this.render()`
+
+### Adding a New Font Creator Feature
+1. Add UI controls to `src/fontcreator.html`
+2. Style in `src/css/font-creator.css`
+3. Implement logic in `FontCreatorController` (e.g., new drawing mode, export format)
+4. Update event listeners in `font-creator-app.js` if needed
+5. Test with example fonts in `examples/` directory
 
 ### Optimizing File Size
 1. Run build and check sizes: `.\build.ps1`

@@ -32,13 +32,12 @@
             <button id="save-font" class="primary" style="padding: 8px 16px; white-space: nowrap;">💾 Save</button>
             <button id="preview-font" style="padding: 8px 16px; white-space: nowrap;">👁️ Preview</button>
             <button id="delete-font" style="padding: 8px 16px; white-space: nowrap; color: #d32f2f;">🗑️ Delete</button>
-            <button id="import-font-btn" style="padding: 8px 16px; white-space: nowrap;">📥 Import JSON</button>
             <button id="import-svg-font-btn" style="padding: 8px 16px; white-space: nowrap;">📥 Import SVG Font</button>
-            <button id="export-font" style="padding: 8px 16px; white-space: nowrap;">📤 Export</button>
-            <input type="file" id="import-font" accept=".json" style="display: none;" />
+            <button id="export-svg-font" style="padding: 8px 16px; white-space: nowrap;">📤 Export SVG Font</button>
             <input type="file" id="import-svg-font" accept=".svg" style="display: none;" />
         </div>
         <div class="main-container">
+            <button id="toggle-left-panel" class="panel-toggle" aria-label="Toggle left panel">☰</button>
             <aside class="left-panel">
                 <div class="section">
                     <h3 class="collapsible-header collapsed" id="font-settings-header">Font Settings <span class="collapse-icon">▼</span></h3>
@@ -64,46 +63,46 @@
                         <input type="number" id="arc-tolerance" value="0.1" step="0.01" min="0.01" />
                     </div>
                     <hr style="margin: 15px 0; border: none; border-top: 1px solid var(--border-color);">
-                    <h4 style="margin: 10px 0 10px 0; font-size: 14px;">Guide Line Positions (%)</h4>
+                    <h4 style="margin: 10px 0 10px 0; font-size: 14px;">Guide Line Positions (SVG Units)</h4>
                     <div class="input-group">
                         <label class="tooltip-label">
                             Ascent
                             <span class="tooltip-icon">ℹ️</span>
-                            <span class="tooltip-text">Position of top of tall letters like 'h', 'k', 'l' (0-100%, from top). Maps to SVG ascent value.</span>
+                            <span class="tooltip-text">Top of tall letters like 'h', 'k', 'l' (SVG font units, typically ~800 for 1000 units-per-em).</span>
                         </label>
-                        <input type="number" id="ascent-pos" value="15" step="1" min="0" max="100" />
+                        <input type="number" id="ascent-pos" value="800" step="10" />
                     </div>
                     <div class="input-group">
                         <label class="tooltip-label">
                             Cap Height
                             <span class="tooltip-icon">ℹ️</span>
-                            <span class="tooltip-text">Position of top of capital letters (0-100%, from top of canvas). Maps to SVG cap-height value.</span>
+                            <span class="tooltip-text">Top of capital letters (SVG font units, typically ~700 for 1000 units-per-em).</span>
                         </label>
-                        <input type="number" id="cap-height-pos" value="25" step="1" min="0" max="100" />
+                        <input type="number" id="cap-height-pos" value="700" step="10" />
                     </div>
                     <div class="input-group">
                         <label class="tooltip-label">
                             X-Height
                             <span class="tooltip-icon">ℹ️</span>
-                            <span class="tooltip-text">Position of top of lowercase letters like 'x' (0-100%, from top). Maps to SVG x-height value.</span>
+                            <span class="tooltip-text">Top of lowercase letters like 'x' (SVG font units, typically ~500 for 1000 units-per-em).</span>
                         </label>
-                        <input type="number" id="x-height-pos" value="45" step="1" min="0" max="100" />
+                        <input type="number" id="x-height-pos" value="500" step="10" />
                     </div>
                     <div class="input-group">
                         <label class="tooltip-label">
                             Baseline
                             <span class="tooltip-icon">ℹ️</span>
-                            <span class="tooltip-text">Position where letters sit (0-100%, from top). Baseline = 0 in SVG coordinates.</span>
+                            <span class="tooltip-text">Where letters sit (SVG font units, always 0 by definition in SVG fonts).</span>
                         </label>
-                        <input type="number" id="baseline-pos" value="75" step="1" min="0" max="100" />
+                        <input type="number" id="baseline-pos" value="0" step="10" />
                     </div>
                     <div class="input-group">
                         <label class="tooltip-label">
-                            Descender
+                            Descent
                             <span class="tooltip-icon">ℹ️</span>
-                            <span class="tooltip-text">Position of bottom of descenders like 'g', 'y' (0-100%, from top). Maps to SVG descent value.</span>
+                            <span class="tooltip-text">Bottom of descenders like 'g', 'y' (SVG font units, typically -200 for 1000 units-per-em).</span>
                         </label>
-                        <input type="number" id="descender-pos" value="85" step="1" min="0" max="100" />
+                        <input type="number" id="descent-pos" value="-200" step="10" />
                     </div>
                     <button id="reset-guides" style="width: 100%; margin-top: 5px;">↺ Reset to Defaults</button>
                     </div>
@@ -111,7 +110,13 @@
 
                 <div class="section">
                     <h3 class="collapsible-header collapsed" id="char-set-header">Character Set <span class="collapse-icon">▼</span></h3>
-                    <div id="char-grid" class="char-grid collapsible-content collapsed"></div>
+                    <div class="collapsible-content collapsed">
+                        <div style="display: flex; gap: 5px; margin-bottom: 10px;">
+                            <input type="text" id="custom-char-input" placeholder="Enter character(s)" maxlength="10" style="flex: 1; padding: 5px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color);" />
+                            <button id="add-custom-char" style="white-space: nowrap;">➕ Add</button>
+                        </div>
+                        <div id="char-grid" class="char-grid"></div>
+                    </div>
                 </div>
 
                 <div class="section">
@@ -120,17 +125,33 @@
                 </div>
 
                 <div class="section">
-                    <h3 class="collapsible-header collapsed" id="kerning-header">Kerning Pairs <span class="collapse-icon">▼</span></h3>
+                    <h3 class="collapsible-header collapsed" id="kerning-header">Kerning Pairs (SVG hkern) <span class="collapse-icon">▼</span></h3>
                     <div class="collapsible-content collapsed" id="kerning-content">
                     <div class="input-group">
-                        <label>Character Pair (e.g., AV)</label>
-                        <input type="text" id="kerning-pair" maxlength="2" placeholder="AV" />
+                        <label>First Glyph (u1 or g1)</label>
+                        <input type="text" id="kerning-u1" placeholder="A, A-Z, or glyph-name" title="Single char, range (A-Z), comma-separated list (A,V,W), or glyph name" />
                     </div>
                     <div class="input-group">
-                        <label>Adjustment (mm)</label>
-                        <input type="number" id="kerning-value" value="-1" step="0.5" />
+                        <label>Second Glyph (u2 or g2)</label>
+                        <input type="text" id="kerning-u2" placeholder="V, a-z, or glyph-name" title="Single char, range (a-z), comma-separated list (a,e,o), or glyph name" />
                     </div>
-                    <button id="add-kerning" style="width: 100%; margin-bottom: 10px;">➕ Add Kerning</button>
+                    <div class="input-group">
+                        <label>Type</label>
+                        <select id="kerning-type">
+                            <option value="unicode">Unicode (u1/u2)</option>
+                            <option value="glyph">Glyph Name (g1/g2)</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Kern Value (k) - Positive decreases spacing</label>
+                        <input type="number" id="kerning-value" value="2" step="0.5" title="Positive: decrease spacing (closer). Negative: increase spacing (further apart)" />
+                    </div>
+                    <button id="add-kerning" style="width: 100%; margin-bottom: 10px;">➕ Add Kerning Rule</button>
+                    <div style="font-size: 11px; color: var(--secondary-color); margin-bottom: 8px;">
+                        Examples: "A" + "V", "A-Z" + "a", "A,V,W" + "o"<br>
+                        Ranges: A-Z, a-z, 0-9. Lists: A,V,W,Y<br>
+                        <strong>k</strong>: +2 = 2mm closer, -2 = 2mm further apart
+                    </div>
                     <div id="kerning-list" style="font-size: 12px; max-height: 150px; overflow-y: auto;"></div>
                     </div>
                 </div>
@@ -153,6 +174,7 @@
                         <button id="undo" style="flex: 1 1 120px; white-space: nowrap;">↶ Undo</button>
                         <button id="redo" style="flex: 1 1 120px; white-space: nowrap;">↷ Redo</button>
                         <button id="clear-char" style="flex: 1 1 120px; white-space: nowrap;">🗑️ Clear</button>
+                        <button id="delete-char" style="flex: 1 1 120px; white-space: nowrap; display: none;">❌ Delete</button>
                         <button id="toggle-guides" style="flex: 1 1 120px; white-space: nowrap;">📏 Guides</button>
                     </div>
                 </div>
@@ -191,7 +213,7 @@
                     <h3>Text to Engrave</h3>
                     <div class="input-group">
                         <label>Text</label>
-                        <textarea id="text-input" placeholder="Enter text..." style="min-height: 100px;">HELLO WORLD</textarea>
+                        <textarea id="text-input" placeholder="Enter text..." style="min-height: 100px;">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</textarea>
                     </div>
                 </div>
 
@@ -200,19 +222,19 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div class="input-group">
                             <label>Output Size (mm)</label>
-                            <input type="number" id="output-size" value="10" step="0.1" min="0.5" />
+                            <input type="number" id="output-size" value="30" step="1" min="0.5" />
                         </div>
                         <div class="input-group">
                             <label>Character Spacing (mm)</label>
-                            <input type="number" id="char-spacing" value="2" step="0.1" min="0" />
+                            <input type="number" id="char-spacing" value="0" step="0.1" min="0" />
                         </div>
                         <div class="input-group">
                             <label>Space Width (mm)</label>
-                            <input type="number" id="space-width" value="3" step="0.1" min="0" />
+                            <input type="number" id="space-width" value="0" step="0.1" min="0" />
                         </div>
                         <div class="input-group">
                             <label>Line Gap (mm)</label>
-                            <input type="number" id="line-spacing" value="2" step="0.1" min="0" />
+                            <input type="number" id="line-spacing" value="0" step="0.1" min="0" />
                         </div>
                         <div class="input-group">
                             <label>Max Width (mm, 0=none)</label>
@@ -234,7 +256,7 @@
                         </div>
                         <div class="input-group">
                             <label>Feed Rate (mm/min)</label>
-                            <input type="number" id="feed-rate" value="500" step="50" min="10" />
+                            <input type="number" id="feed-rate" value="1000" step="50" min="10" />
                         </div>
                         <div class="input-group">
                             <label>Plunge Rate (mm/min)</label>
@@ -246,7 +268,7 @@
                         </div>
                         <div class="input-group">
                             <label>Engrave Depth (mm)</label>
-                            <input type="number" id="engrave-depth" value="-0.1" step="0.05" />
+                            <input type="number" id="engrave-depth" value="-0.2" step="0.05" />
                         </div>
                     </div>
                 </div>
