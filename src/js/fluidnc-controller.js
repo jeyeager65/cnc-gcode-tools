@@ -19,10 +19,12 @@ class FluidNCController extends Controller {
         this.statusUpdateInterval = null; // Interval for updating elapsed time
         this.lastStatusTool = -1; // Track last tool displayed in status panel
         this.runningFilePath = null; // Track the file path currently running
+        this.currentFilePath = null; // Track current loaded file path
         this.setupFluidNCListeners();
         this.loadSDFiles();
         this.syncGridFromFluidNC(); // Auto-sync grid dimensions on load
         this.setupStatusMonitoring(); // Monitor FluidNC status messages
+        this.restoreViewerState(); // Restore previous state if available
     }
 
     /**
@@ -161,6 +163,12 @@ class FluidNCController extends Controller {
         if (sdFilesPanel) sdFilesPanel.style.display = 'none';
         if (statsPanel) statsPanel.style.display = 'none';
         
+        // Switch to display tab on mobile to show the animation
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+            this.switchMobileTab('display');
+        }
+        
         console.log('AFTER style changes:', {
             statusDisplay: statusPanel?.style.display,
             sdFilesDisplay: sdFilesPanel?.style.display,
@@ -198,6 +206,9 @@ class FluidNCController extends Controller {
         // Reset pause button
         const pauseBtn = document.getElementById('btn-pause-resume');
         if (pauseBtn) pauseBtn.textContent = 'Pause';
+        
+        // Clear viewer state when job completes
+        this.clearViewerState();
     }
     
     /**
@@ -417,6 +428,11 @@ class FluidNCController extends Controller {
 
             // Process the GCode content using existing loadFile logic
             await this.processGCode(content, file.name);
+            
+            // Store current file path, cache file, and clear any previous execution state
+            this.currentFilePath = file.path;
+            await this.cacheFile(this.currentFilePath, content); // Cache for potential state restoration
+            this.clearViewerState(); // Clear execution state from previous file
 
             progressFill.style.width = '100%';
             setTimeout(() => {
@@ -457,6 +473,9 @@ class FluidNCController extends Controller {
 
             // Detect tools used in the file
             this.detectTools(segments);
+            
+            // Calculate segment execution times for predictive animation
+            this.calculateSegmentExecutionTimes();
 
             // Update renderers
             this.renderer2d.setSegments(segments, bounds);
@@ -565,31 +584,46 @@ class FluidNCController extends Controller {
             const fileContent = this.gcodeText || '';
             const totalBytes = new Blob([fileContent]).size;
             
-            // Setup smooth interpolation between progress updates
-            let interpolationAnimationFrame = null;
-            let currentDisplayIndex = 0;
-            let targetDisplayIndex = 0;
+            // Setup time-based predictive animation
+            this.predictiveAnimationId = null;
+            let executionStartTime = Date.now();
+            let timeOffset = 0;
             
-            const smoothInterpolate = () => {
-                if (currentDisplayIndex < targetDisplayIndex) {
-                    // Move towards target at a smooth rate
-                    const remaining = targetDisplayIndex - currentDisplayIndex;
-                    const step = Math.max(1, Math.ceil(remaining / 10)); // Move 10% of remaining distance
-                    currentDisplayIndex = Math.min(currentDisplayIndex + step, targetDisplayIndex);
-                    
-                    this.animator.currentIndex = Math.floor(currentDisplayIndex);
-                    this.animator.segmentProgress = currentDisplayIndex % 1;
-                    
-                    if (this.animator.onUpdate) {
-                        this.animator.onUpdate(this.animator.currentIndex, this.animator.segmentProgress);
-                    }
-                    
-                    // Continue interpolating if not at target
-                    if (currentDisplayIndex < targetDisplayIndex) {
-                        interpolationAnimationFrame = requestAnimationFrame(smoothInterpolate);
-                    }
+            const predictiveAnimate = () => {
+                // Calculate elapsed time since execution started
+                const now = Date.now();
+                const elapsedSeconds = (now - executionStartTime) / 1000 + timeOffset;
+                
+                // Predict current segment based on elapsed time
+                const predictedIndex = this.findSegmentByElapsedTime(elapsedSeconds);
+                
+                // Smooth interpolation towards predicted position
+                const currentIndex = this.animator.currentIndex;
+                const diff = predictedIndex - currentIndex;
+                
+                // Move smoothly (15% per frame), but never backward
+                const step = Math.abs(diff) > 0.01 ? diff * 0.15 : diff;
+                const newIndex = Math.max(currentIndex, currentIndex + step); // Never go backward
+                
+                this.animator.currentIndex = Math.floor(newIndex);
+                this.animator.segmentProgress = newIndex % 1;
+                
+                // Update UI and renderers
+                if (this.animator.onUpdate) {
+                    this.animator.onUpdate(this.animator.currentIndex, this.animator.segmentProgress);
                 }
+                
+                // Continue animating
+                this.predictiveAnimationId = requestAnimationFrame(predictiveAnimate);
             };
+            
+            // Reset animator position to start
+            this.animator.currentIndex = 0;
+            this.animator.segmentProgress = 0;
+            
+            // Set renderers to show no segments initially
+            this.renderer2d.setMaxSegmentIndex(0, 0);
+            this.renderer3d.setMaxSegmentIndex(0, 0);
             
             // Keep animator paused - we'll manually update position
             this.animator.pause();
@@ -598,6 +632,16 @@ class FluidNCController extends Controller {
             // Show status panel and initialize fields
             this.showStatusPanel();
             console.log('Status panel shown');
+            
+            // Force camera refit and canvas update after tab switch
+            // Use setTimeout to ensure DOM has updated
+            setTimeout(() => {
+                const canvas = this.currentView === '2d' ? this.canvas2d : this.canvas3d;
+                const width = canvas.clientWidth || canvas.width;
+                const height = canvas.clientHeight || canvas.height;
+                console.log('Refitting camera with canvas size:', width, 'x', height);
+                this.camera.fitToBounds(this.bounds, 0.1, width, height);
+            }, 100);
             
             // Set total time estimate
             if (this.animator.estimatedTotalTime) {
@@ -613,40 +657,45 @@ class FluidNCController extends Controller {
                 document.getElementById('status-current-tool').textContent = `T${initialTool}`;
             }
             
-            // Throttle progress updates to avoid excessive calls
-            let lastUpdateTime = 0;
-            const updateInterval = 200; // Update at most every 200ms
+            // Start predictive animation
+            predictiveAnimate();
             
-            console.log('About to call fluidAPI.runSDFile...');
-            // Monitor progress and sync animation position
-            await this.fluidAPI.runSDFile(file.path, (percent) => {
+            // Monitor progress from FluidNC
+            let lastUpdateTime = 0;
+            let lastStateSaveTime = 0;
+            const updateInterval = 500;
+            const stateSaveInterval = 5000; // Save state every 5 seconds
+            
+            await this.fluidAPI.runSDFile(file.path, async (percent) => {
                 const now = Date.now();
                 if (now - lastUpdateTime < updateInterval) {
-                    return; // Skip this update
+                    return;
                 }
                 lastUpdateTime = now;
                 
-                // Calculate byte position from percentage
+                // Calculate actual segment position from byte position
                 const bytePosition = Math.floor((percent / 100) * totalBytes);
+                const actualIndex = this.findSegmentByBytePosition(bytePosition);
                 
-                // Find segment index corresponding to this byte position
-                const newTargetIndex = this.findSegmentByBytePosition(bytePosition);
+                // Periodically save state during execution
+                if (now - lastStateSaveTime > stateSaveInterval) {
+                    lastStateSaveTime = now;
+                    // Save state without blocking (fire and forget)
+                    this.saveViewerState().catch(err => console.error('Failed to save state:', err));
+                }
                 
-                if (newTargetIndex >= 0 && newTargetIndex !== targetDisplayIndex) {
-                    // Set new target for smooth interpolation
-                    targetDisplayIndex = newTargetIndex;
+                if (actualIndex >= 0) {
+                    // IMPORTANT: Adjust timeOffset to align prediction with reality
+                    // Don't directly set animator position - let prediction handle it
+                    const actualTime = this.segmentExecutionTimes[actualIndex] || 0;
+                    const elapsedSeconds = (now - executionStartTime) / 1000;
+                    const newTimeOffset = actualTime - elapsedSeconds;
                     
-                    // Cancel any existing interpolation
-                    if (interpolationAnimationFrame) {
-                        cancelAnimationFrame(interpolationAnimationFrame);
-                    }
+                    timeOffset = newTimeOffset;
                     
-                    // Start smooth interpolation to new target
-                    interpolationAnimationFrame = requestAnimationFrame(smoothInterpolate);
-                    
-                    // Update current tool display if tool changed
-                    if (this.segments[newTargetIndex]) {
-                        const currentTool = this.segments[newTargetIndex].tool || 0;
+                    // Update current tool display if changed
+                    if (this.segments[actualIndex]) {
+                        const currentTool = this.segments[actualIndex].tool || 0;
                         if (this.lastStatusTool !== currentTool) {
                             this.lastStatusTool = currentTool;
                             document.getElementById('status-current-tool').textContent = `T${currentTool}`;
@@ -654,13 +703,6 @@ class FluidNCController extends Controller {
                     }
                 }
             });
-            
-            console.log('fluidAPI.runSDFile completed');
-            
-            // Stop interpolation if still running
-            if (interpolationAnimationFrame) {
-                cancelAnimationFrame(interpolationAnimationFrame);
-            }
             
             btn.textContent = '✓ Started';
             setTimeout(() => {
@@ -755,6 +797,79 @@ class FluidNCController extends Controller {
     }
 
     /**
+     * Calculate execution time for each segment based on feed rate and distance
+     */
+    calculateSegmentExecutionTimes() {
+        if (!this.segments || this.segments.length === 0) return;
+        
+        const startTime = performance.now();
+        
+        this.segmentExecutionTimes = [];
+        let cumulativeTime = 0;
+        
+        for (let i = 0; i < this.segments.length; i++) {
+            const seg = this.segments[i];
+            let segmentTime = 0;
+            
+            // Skip segments without start/end properties
+            if (!seg.start || !seg.end) {
+                this.segmentExecutionTimes.push(cumulativeTime);
+                continue;
+            }
+            
+            // Calculate distance - segments use start/end objects
+            const dx = seg.end.x - seg.start.x;
+            const dy = seg.end.y - seg.start.y;
+            const dz = seg.end.z - seg.start.z;
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            
+            // Get feed rate (units per minute)
+            const feedRate = seg.feedRate || 1000; // Default 1000 mm/min if not specified
+            
+            if (seg.type === 'rapid' || seg.type === 'G0') {
+                // Rapid moves - assume fixed rapid rate (most machines ~5000-10000 mm/min)
+                const rapidRate = 6000; // Conservative estimate
+                segmentTime = distance > 0 ? (distance / rapidRate) * 60 : 0; // Convert to seconds
+            } else if (seg.type === 'cut' || seg.type === 'G1' || seg.type === 'G2' || seg.type === 'G3') {
+                // Feed moves - use actual feed rate
+                segmentTime = distance > 0 ? (distance / feedRate) * 60 : 0; // Convert to seconds
+            }
+            
+            cumulativeTime += segmentTime;
+            this.segmentExecutionTimes.push(cumulativeTime);
+        }
+        
+        const endTime = performance.now();
+        console.log(`[PERF] Total estimated execution time: ${(cumulativeTime / 60).toFixed(2)} minutes (calculated in ${(endTime - startTime).toFixed(2)}ms)`);
+    }
+
+    /**
+     * Find segment index based on elapsed time using predictive estimation
+     */
+    findSegmentByElapsedTime(elapsedSeconds) {
+        if (!this.segments || this.segments.length === 0) return 0;
+        if (!this.segmentExecutionTimes || this.segmentExecutionTimes.length === 0) {
+            console.warn('segmentExecutionTimes not calculated');
+            return 0;
+        }
+        
+        // Binary search for segment at this time
+        let left = 0;
+        let right = this.segmentExecutionTimes.length - 1;
+        
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            if (this.segmentExecutionTimes[mid] <= elapsedSeconds) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+        
+        return Math.min(Math.max(0, right), this.segments.length - 1);
+    }
+
+    /**
      * Override switchMobileTab to refit camera when switching to display
      */
     switchMobileTab(tabName) {
@@ -775,12 +890,228 @@ class FluidNCController extends Controller {
     }
 
     /**
+     * Override setupAnimator to add periodic state saving
+     */
+    setupAnimator() {
+        super.setupAnimator();
+        
+        // Save original onUpdate callback
+        const originalOnUpdate = this.animator.onUpdate;
+        let lastSaveIndex = 0;
+        
+        // Wrap onUpdate to save state periodically (every 100 segments)
+        this.animator.onUpdate = (index, segmentProgress = 1) => {
+            // Call original update
+            originalOnUpdate.call(this, index, segmentProgress);
+            
+            // Save state every 100 segments to avoid excessive writes
+            if (this.currentFilePath && index - lastSaveIndex >= 100) {
+                lastSaveIndex = index;
+                // Save only metadata, not file content
+                this.saveViewerMetadata();
+            }
+        };
+    }
+
+    /**
+     * Save only metadata (called during playback)
+     */
+    saveViewerMetadata() {
+        if (!this.currentFilePath) return;
+        
+        try {
+            const state = {
+                filePath: this.currentFilePath,
+                animationIndex: this.animator.currentIndex,
+                layerMin: this.layerMin,
+                layerMax: this.layerMax,
+                toolStates: Array.from(this.tools.entries()),
+                currentView: this.currentView,
+                rapidMovesVisible: this.rapidMovesVisible,
+                rapidMoveColor: this.rapidMoveColor,
+                timestamp: Date.now()
+            };
+            
+            localStorage.setItem('fluidnc-viewer-state', JSON.stringify(state));
+        } catch (error) {
+            console.error('Failed to save viewer metadata:', error);
+        }
+    }
+
+    /**
      * Format file size for display
      */
     formatFileSize(bytes) {
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    /**
+     * IndexedDB helper - Open or create database
+     */
+    openDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('FluidNCViewer', 1);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('files')) {
+                    db.createObjectStore('files', { keyPath: 'path' });
+                }
+            };
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Cache file content to IndexedDB
+     */
+    async cacheFile(filePath, fileContent) {
+        try {
+            const db = await this.openDB();
+            const tx = db.transaction('files', 'readwrite');
+            await tx.objectStore('files').put({
+                path: filePath,
+                content: fileContent,
+                timestamp: Date.now()
+            });
+            console.log('Cached file to IndexedDB:', filePath);
+        } catch (error) {
+            console.error('Failed to cache file:', error);
+        }
+    }
+
+    /**
+     * Get cached file from IndexedDB
+     */
+    async getCachedFile(filePath) {
+        try {
+            const db = await this.openDB();
+            const tx = db.transaction('files', 'readonly');
+            const result = await tx.objectStore('files').get(filePath);
+            return result;
+        } catch (error) {
+            console.error('Failed to get cached file:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Save viewer state to localStorage (file should already be cached in IndexedDB)
+     */
+    async saveViewerState() {
+        if (!this.currentFilePath) return;
+        
+        try {
+            
+            // Save metadata to localStorage
+            const state = {
+                filePath: this.currentFilePath,
+                animationIndex: this.animator.currentIndex,
+                layerMin: this.layerMin,
+                layerMax: this.layerMax,
+                toolStates: Array.from(this.tools.entries()),
+                currentView: this.currentView,
+                rapidMovesVisible: this.rapidMovesVisible,
+                rapidMoveColor: this.rapidMoveColor,
+                timestamp: Date.now()
+            };
+            
+            localStorage.setItem('fluidnc-viewer-state', JSON.stringify(state));
+            console.log('Saved viewer state');
+        } catch (error) {
+            console.error('Failed to save viewer state:', error);
+        }
+    }
+
+    /**
+     * Restore viewer state from cache
+     */
+    async restoreViewerState() {
+        try {
+            const saved = localStorage.getItem('fluidnc-viewer-state');
+            if (!saved) return;
+            
+            const state = JSON.parse(saved);
+            const ageHours = (Date.now() - state.timestamp) / 3600000;
+            
+            // Clear if older than 24 hours
+            if (ageHours > 24) {
+                localStorage.removeItem('fluidnc-viewer-state');
+                console.log('Cleared stale viewer state (age: ' + ageHours.toFixed(1) + ' hours)');
+                return;
+            }
+            
+            // Try to load from IndexedDB cache
+            const cached = await this.getCachedFile(state.filePath);
+            if (!cached || !cached.content) {
+                console.log('No cached file found for:', state.filePath);
+                localStorage.removeItem('fluidnc-viewer-state');
+                return;
+            }
+            
+            console.log('Restoring viewer state from cache...');
+            
+            // Show progress
+            const progressBar = document.getElementById('progress-bar');
+            const progressFill = document.getElementById('progress-fill');
+            if (progressBar) progressBar.classList.remove('hidden');
+            if (progressFill) progressFill.style.width = '0%';
+            
+            // Parse the cached file
+            const filename = state.filePath.split('/').pop();
+            await this.processGCode(cached.content, filename);
+            
+            // Restore viewer settings
+            this.currentFilePath = state.filePath;
+            this.animator.currentIndex = state.animationIndex || 0;
+            this.layerMin = state.layerMin;
+            this.layerMax = state.layerMax;
+            this.currentView = state.currentView || '2d';
+            this.rapidMovesVisible = state.rapidMovesVisible !== undefined ? state.rapidMovesVisible : true;
+            this.rapidMoveColor = state.rapidMoveColor || '#999999';
+            
+            // Restore tool states
+            if (state.toolStates && Array.isArray(state.toolStates)) {
+                state.toolStates.forEach(([toolNum, toolState]) => {
+                    if (this.tools.has(toolNum)) {
+                        this.tools.set(toolNum, toolState);
+                    }
+                });
+            }
+            
+            // Update UI
+            this.updateToolPanel();
+            this.updateRenderers();
+            this.render();
+            
+            // Switch to correct view
+            if (this.currentView === '3d') {
+                this.canvas2d.style.display = 'none';
+                this.canvas3d.style.display = 'block';
+                this.canvas3dOverlay.style.display = 'block';
+            }
+            
+            progressFill.style.width = '100%';
+            setTimeout(() => {
+                progressBar.classList.add('hidden');
+            }, 500);
+            
+            console.log('Viewer state restored successfully');
+        } catch (error) {
+            console.error('Failed to restore viewer state:', error);
+            // Clear invalid state
+            localStorage.removeItem('fluidnc-viewer-state');
+        }
+    }
+
+    /**
+     * Clear viewer state (called when job completes or file is closed)
+     */
+    clearViewerState() {
+        localStorage.removeItem('fluidnc-viewer-state');
+        console.log('Cleared viewer state');
     }
 }
 

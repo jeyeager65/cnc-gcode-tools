@@ -112,6 +112,11 @@ class FluidNCAPI {
      * Handle JSON stream responses for commands like $Files/ListGcode
      */
     handleJSONStream(content) {
+        // Skip status messages (format: <State|MPos:x,y,z|FS:feed,speed>)
+        if (content.trim().startsWith('<') && content.trim().endsWith('>')) {
+            return;
+        }
+        
         // Check if any pending request is waiting for JSON data
         for (const [id, request] of this.pendingRequests.entries()) {
             if (request.command && request.command.startsWith('$Files/')) {

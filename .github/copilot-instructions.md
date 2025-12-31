@@ -39,9 +39,10 @@ All classes are **globally scoped** (no modules/imports) for single-file HTML in
 
 ### Build System (`build.ps1`)
 PowerShell script that creates three single-file HTML distributions:
-1. **Standalone** (`dist/gcodeviewer.html`) - Local file viewer, includes: parser, camera, renderer2d, renderer3d, animator, controller
-2. **FluidNC** (`dist/gcodeviewer.html`) - ESP32 device integration, adds: fluidnc-api, fluidnc-controller (with `.gz` version)
+1. **FluidNC Extension** (`dist/gcodeviewer.html.gz`) - ESP32 device integration, includes: fluidnc-api, fluidnc-controller. HTML deleted after gzip.
+2. **Standalone Version** (`dist/gcodeviewer.html`) - Local file viewer, includes: parser, camera, renderer2d, renderer3d, animator, controller
 3. **Font Creator** (`dist/fontcreator.html`) - Font design tool, adds: font-creator-controller, font-creator-app
+4. **Landing Page** (`dist/index.html`) - GitHub Pages landing page copied from `src/index.html`
 
 **Build process:**
 1. Reads HTML template from `src/gcodeviewer{-fluidnc,}.html` or `src/fontcreator.html`
@@ -110,6 +111,13 @@ All colors defined in `:root[data-theme="light/dark"]` in `common.css`:
 ```
 Theme persisted in `localStorage`, applied to `<html data-theme="...">` attribute.
 
+### 7. SpaceMouse/3D Mouse Integration
+Controller supports 3Dconnexion SpaceMouse via Gamepad API:
+- Detects devices with "3dconnexion", "spacemouse", or "space" in gamepad ID
+- Polls axes during render loop for smooth camera control
+- Maps axes to pan/zoom/rotate operations in 3D view
+- No configuration UI - auto-detects and enables when connected
+
 ## Critical Code Conventions
 
 ### File Size Discipline
@@ -160,6 +168,14 @@ class FluidNCController extends Controller {
 ```
 Instantiate `FluidNCController` instead of `Controller` in `fluidnc.html`.
 
+**Predictive Animation System:**
+During file execution, FluidNC provides progress updates every 200-500ms. To achieve smooth 60fps animation:
+- `calculateSegmentExecutionTimes()` - Pre-computes expected time for each segment (distance ÷ feed rate)
+- `findSegmentByElapsedTime()` - Uses binary search to predict current segment from elapsed time
+- `predictiveAnimate()` - Runs at 60fps via `requestAnimationFrame`, estimates position using time
+- **Time offset adjustment** - When FluidNC progress differs from prediction by >10 segments, adjusts time offset to correct drift
+- Result: Smooth animation that predicts machine position between infrequent status updates
+
 ## Testing Workflow
 
 ### Local Testing
@@ -169,7 +185,7 @@ Instantiate `FluidNCController` instead of `Controller` in `fluidnc.html`.
 
 ### Build Testing
 ```powershell
-.\build.ps1  # Creates dist/standalone.html and dist/gcodeviewer.html
+.\build.ps1  # Creates dist/gcodeviewer.html and dist/gcodeviewer.html.gz
 # Open dist files in browser to test minified version
 ```
 
@@ -192,6 +208,7 @@ curl -F "file=@dist/gcodeviewer.html.gz" http://YOUR-DEVICE-IP/files
 - [ ] Light/dark theme switch (verify localStorage persistence)
 - [ ] Screenshot export (Canvas 2D `toDataURL()` functionality)
 - [ ] Touch controls on mobile/tablet (pinch zoom, two-finger pan)
+- [ ] SpaceMouse input (if device connected)
 
 **Font Creator Specific:**
 - [ ] Draw character strokes on canvas (mouse + touch)
@@ -295,3 +312,97 @@ Use **Conventional Commits** format:
 - **WebGL support:** Falls back to 2D-only if WebGL unavailable
 - **Arc precision:** Tessellation granularity may show facets on extreme zoom
 - **GCode dialect:** Targets GRBL/LinuxCNC/FluidNC (may not support all variants)
+- **FluidNC reload context loss:** Page reload during file execution loses viewer state (file path, playback position, tool visibility). Files cannot be re-fetched from FluidNC during execution (blocked for performance). Use IndexedDB to cache file content and localStorage for metadata.
+
+## Future Enhancement Patterns
+
+### FluidNC State Persistence
+To handle page reloads during long jobs (hours), implement IndexedDB for file caching and localStorage for metadata:
+```javascript
+// In FluidNCController - IndexedDB wrapper for file caching
+async cacheFile(filePath, fileContent) {
+    const db = await this.openDB();
+    const tx = db.transaction('files', 'readwrite');
+    await tx.objectStore('files').put({
+        path: filePath,
+        content: fileContent,
+        timestamp: Date.now()
+    });
+}
+
+async getCachedFile(filePath) {
+    const db = await this.openDB();
+    const tx = db.transaction('files', 'readonly');
+    return await tx.objectStore('files').get(filePath);
+}
+
+openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('FluidNCViewer', 1);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            db.createObjectStore('files', { keyPath: 'path' });
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// Save state after file loads
+async saveViewerState(fileContent) {
+    await this.cacheFile(this.currentFilePath, fileContent);
+    localStorage.setItem('fluidnc-viewer-state', JSON.stringify({
+        filePath: this.currentFilePath,
+        animationIndex: this.animator.currentIndex,
+        layerMin: this.layerMin,
+        layerMax: this.layerMax,
+        toolStates: Array.from(this.tools.entries()),
+        timestamp: Date.now()
+    }));
+}
+
+// On controller init - restore from cache
+async restoreViewerState() {
+    const saved = localStorage.getItem('fluidnc-viewer-state');
+    if (!saved) return;
+    
+    const state = JSON.parse(saved);
+    const ageHours = (Date.now() - state.timestamp) / 3600000;
+    if (ageHours > 24) { // 24 hour timeout
+        localStorage.removeItem('fluidnc-viewer-state');
+        return;
+    }
+    
+    // Try to load from IndexedDB cache
+    const cached = await this.getCachedFile(state.filePath);
+    if (cached) {
+        // Show UI: "Restoring previous file..."
+        await this.parser.parseString(cached.content);
+        this.animator.currentIndex = state.animationIndex;
+        this.layerMin = state.layerMin;
+        // ... restore other settings
+    }
+}
+
+// Clear state when job completes or file is closed
+clearViewerState() {
+    localStorage.removeItem('fluidnc-viewer-state');
+    // Optionally clear IndexedDB cache too, or leave for re-use
+}
+```
+**Metadata to store in localStorage:**
+- `filePath` - path on FluidNC device for reference/display
+- `animationIndex` - current playback position for resume
+- `layerMin`/`layerMax` - Z-height filter values
+- `toolStates` - Map of tool visibility and colors: `[[toolNum, {visible, color}], ...]`
+- `currentView` - '2d' or '3d' mode
+- `rapidMovesVisible` - G0 travel move visibility
+- `rapidMoveColor` - G0 color preference
+- `timestamp` - Date.now() for staleness check
+
+**Key constraints:** 
+- IndexedDB has no practical size limit (handles multi-GB files)
+- Cache file content on load, metadata in localStorage for quick access
+- Clear cached files after 24h to prevent disk bloat
+- Call `saveViewerState(fileContent)` after file successfully loads and periodically during playback (for animation position)
+- Call `clearViewerState()` when user closes file or job completes successfully
