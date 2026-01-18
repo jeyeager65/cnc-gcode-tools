@@ -16,6 +16,7 @@ class GCodeParser {
         this.plane = 'XY'; // G17/G18/G19
         this.feedRate = 0;
         this.currentTool = 1; // Start at Tool 1
+        this.motionMode = null; // G0, G1, G2, or G3 - modal command
         
         // Tool names extracted from comments
         this.toolNames = [];
@@ -198,12 +199,18 @@ class GCodeParser {
         if (words.length === 0) return;
         
         // Process commands
-        let commandProcessed = false;
+        let motionProcessed = false;
         
         for (const [letter, value] of words) {
             switch (letter) {
                 case 'G':
-                    commandProcessed = this.processGCode(Math.floor(value), words, lineNum) || commandProcessed;
+                    const gcode = Math.floor(value);
+                    // Check if this is a motion command (G0/G1/G2/G3)
+                    const isMotionCommand = gcode === 0 || gcode === 1 || gcode === 2 || gcode === 3;
+                    if (isMotionCommand) {
+                        motionProcessed = true; // Motion command found, don't apply modal later
+                    }
+                    this.processGCode(gcode, words, lineNum);
                     break;
                 case 'M':
                     this.processMCode(Math.floor(value), words, lineNum);
@@ -229,6 +236,30 @@ class GCodeParser {
                 case 'F':
                     this.feedRate = value;
                     break;
+            }
+        }
+        
+        // If no motion was processed but we have a modal motion mode, apply it to any coordinates
+        if (!motionProcessed && this.motionMode !== null) {
+            // Check if position coordinates are present (X/Y/Z)
+            const hasPositionCoords = words.some(([letter]) => 
+                letter === 'X' || letter === 'Y' || letter === 'Z'
+            );
+            
+            if (hasPositionCoords) {
+                // Only apply modal motion for linear moves (G0/G1)
+                // Arc moves (G2/G3) require explicit I/J/K parameters each time
+                if (this.motionMode === 0 || this.motionMode === 1) {
+                    this.processGCode(this.motionMode, words, lineNum);
+                } else if (this.motionMode === 2 || this.motionMode === 3) {
+                    // For arcs, check if I/J/K parameters are present
+                    const hasArcParams = words.some(([letter]) => 
+                        letter === 'I' || letter === 'J' || letter === 'K'
+                    );
+                    if (hasArcParams) {
+                        this.processGCode(this.motionMode, words, lineNum);
+                    }
+                }
             }
         }
     }
@@ -267,12 +298,16 @@ class GCodeParser {
     processGCode(code, words, lineNum) {
         switch (code) {
             case 0: // Rapid move
+                this.motionMode = 0;
                 return this.linearMove(words, 'rapid', lineNum);
             case 1: // Linear move
+                this.motionMode = 1;
                 return this.linearMove(words, 'cut', lineNum);
             case 2: // Clockwise arc
+                this.motionMode = 2;
                 return this.arcMove(words, 'cw', lineNum);
             case 3: // Counter-clockwise arc
+                this.motionMode = 3;
                 return this.arcMove(words, 'ccw', lineNum);
             case 17: // XY plane
                 this.plane = 'XY';
