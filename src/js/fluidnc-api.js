@@ -60,6 +60,10 @@ class FluidNCAPI {
                 if (content.status === 'success' && content.response && content.response.startsWith('$/')) {
                     this.handleCommandResponse(content.response);
                 }
+                // Full command response for $Files/ commands (some WebUI versions return it in one piece)
+                else if (type === 'cmd' && typeof content.response === 'string') {
+                    this.handleJSONStream(content.response);
+                }
                 // Or if it's a direct string response starting with $/
                 else if (typeof content === 'string' && content.startsWith('$/')) {
                     this.handleCommandResponse(content);
@@ -123,26 +127,49 @@ class FluidNCAPI {
                 if (!request.jsonBuffer) {
                     request.jsonBuffer = '';
                 }
-                
-                // Check for completion marker
-                if (content.trim() === 'ok') {
-                    // Clean and parse the accumulated JSON (remove \r\n characters)
-                    try {
-                        const cleanedJSON = request.jsonBuffer.replace(/\r\n/g, '');
-                        const data = JSON.parse(cleanedJSON);
-                        // Successfully parsed complete JSON
-                        this.pendingRequests.delete(id);
-                        request.resolve(cleanedJSON);
-                    } catch (e) {
-                        console.error('[FluidNC API] Failed to parse JSON:', e, request.jsonBuffer);
-                        this.pendingRequests.delete(id);
-                        request.reject(new Error('Invalid JSON response'));
+
+                // A chunk may hold several lines, including the trailing "ok" or an error
+                let done = false;
+                for (let line of content.split(/\r?\n/)) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    if (trimmed === 'ok') {
+                        done = true;
+                        continue;
                     }
-                    return;
+                    if (/^error:/i.test(trimmed)) {
+                        console.error('[FluidNC API] Command error:', request.command, trimmed);
+                        this.pendingRequests.delete(id);
+                        request.reject(new Error(trimmed));
+                        return;
+                    }
+                    // Skip status reports and log messages
+                    if ((trimmed.startsWith('<') && trimmed.endsWith('>')) || trimmed.startsWith('[MSG:')) {
+                        continue;
+                    }
+                    // FluidNC may wrap JSON output in [JSON:...] lines
+                    const wrapped = trimmed.match(/^\[JSON:(.*)\]$/);
+                    request.jsonBuffer += wrapped ? wrapped[1] : line.replace(/\r/g, '');
                 }
-                
-                // Accumulate JSON content
-                request.jsonBuffer += content;
+
+                // Resolve as soon as the buffer holds complete JSON, without waiting for "ok"
+                if (request.jsonBuffer) {
+                    try {
+                        JSON.parse(request.jsonBuffer);
+                        this.pendingRequests.delete(id);
+                        request.resolve(request.jsonBuffer);
+                        return;
+                    } catch (e) {
+                        // Incomplete - keep accumulating
+                    }
+                }
+
+                // An "ok" with nothing buffered likely belongs to an earlier command - keep waiting
+                if (done && request.jsonBuffer) {
+                    console.error('[FluidNC API] Failed to parse JSON:', request.jsonBuffer);
+                    this.pendingRequests.delete(id);
+                    request.reject(new Error('Invalid JSON response'));
+                }
                 return;
             }
         }
@@ -245,14 +272,16 @@ class FluidNCAPI {
                 content: command
             });
             
-            // Timeout after 10 seconds
+            // Timeout after 10 seconds (30 for file listings, which can be slow on large SD cards)
+            const timeoutMs = command.startsWith('$Files/') ? 30000 : 10000;
             setTimeout(() => {
                 if (this.pendingRequests.has(id)) {
+                    const request = this.pendingRequests.get(id);
                     this.pendingRequests.delete(id);
-                    console.error('[FluidNC API] Command timeout:', { id, command });
+                    console.error('[FluidNC API] Command timeout:', { id, command, partial: request.jsonBuffer });
                     reject(new Error('Command timeout'));
                 }
-            }, 10000);
+            }, timeoutMs);
         });
     }
 
