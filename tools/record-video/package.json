@@ -1,0 +1,12 @@
+{
+  "name": "cnc-gcode-tools-record-video",
+  "private": true,
+  "description": "Records the standalone viewer animating a G-code file to an MP4",
+  "type": "module",
+  "scripts": {
+    "record": "node record.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
+}
