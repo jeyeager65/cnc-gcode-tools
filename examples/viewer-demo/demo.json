@@ -1,0 +1,13 @@
+{
+  "title": "Demo job: a board with one feature per bit type",
+  "files": [
+    { "file": "ViewerDemo_ALL.nc", "title": "Whole job, all 7 bits in one file" },
+    { "file": "ViewerDemo_T1_flat.nc", "title": "T1 flat end mill: pocket around an island" },
+    { "file": "ViewerDemo_T2_bullnose.nc", "title": "T2 bull nose: stadium pocket" },
+    { "file": "ViewerDemo_T3_ball.nc", "title": "T3 ball nose: wave groove" },
+    { "file": "ViewerDemo_T4_vbit.nc", "title": "T4 V-bit: V-carved text" },
+    { "file": "ViewerDemo_T5_drill.nc", "title": "T5 drill: pecked holes" },
+    { "file": "ViewerDemo_T6_chamfer.nc", "title": "T6 chamfer: pocket and hole edges" },
+    { "file": "ViewerDemo_T7_taperball.nc", "title": "T7 tapered ball nose: spiral" }
+  ]
+}

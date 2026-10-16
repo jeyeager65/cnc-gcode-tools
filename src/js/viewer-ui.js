@@ -91,6 +91,10 @@ const ViewerUI = {
                 <span class="vw-btn vw-primary">Choose file…</span>
                 <input type="file" id="file-input" accept=".nc,.gcode,.ngc,.gco,.tap,.txt" hidden>
             </div>
+            <div class="vw-demo" id="demo-section" hidden>
+                <div class="vw-label">Demo job</div>
+                <ul class="vw-recent" id="demo-list"></ul>
+            </div>
             <div class="vw-label">Recent</div>
             <ul class="vw-recent" id="recent-list"><li class="vw-muted">Files you open appear here.</li></ul>
             <div class="vw-divider"></div>

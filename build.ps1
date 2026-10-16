@@ -308,6 +308,7 @@ Copy-Item -Path "docs/viewer-desktop.png", "docs/viewer-phone.png" -Destination 
 # Demo files for gcodeviewer.html?demo (and its "Try the demo file" button)
 New-Item -ItemType Directory -Force -Path "dist/demo" | Out-Null
 Copy-Item -Path "examples/viewer-demo/*.nc" -Destination "dist/demo"
+Copy-Item -Path "examples/viewer-demo/demo.json" -Destination "dist/demo"
 
 # Package the VS Code extension (.vsix) for "Install from VSIX..."
 # It is staged under dist/ so the viewer files it needs from src/ can be added

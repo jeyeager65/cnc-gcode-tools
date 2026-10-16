@@ -388,6 +388,9 @@ html body.vw-body {
 
 .vw .vw-drop-zone:hover, .vw .vw-drop-zone.drag-over { border-color: var(--vw-accent); }
 
+.vw .vw-demo { display: flex; flex-direction: column; gap: 6px; }
+.vw .vw-demo[hidden] { display: none; }
+.vw .vw-demo .vw-recent .vw-recent-name { font-family: inherit; font-size: 13px; white-space: normal; }
 .vw .vw-recent { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 
 .vw .vw-recent button {

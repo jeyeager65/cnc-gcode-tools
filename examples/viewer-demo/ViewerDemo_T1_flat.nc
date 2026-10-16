@@ -23,6 +23,7 @@ G0 G54 G17 G21 G90 G94
 (Start: Tool T1 1/4in flat end mill in the router, jogged to board front-left corner, just above the board, router off)
 
 (===== T1: 1/4in flat end mill - Kobalt trim router dial 2.5 = ~16000 RPM, ~7 min =====)
+T1
 G10 L20 P0 X0 Y0 Z0 (here = X0 Y0, temporary Z0)
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
 M0 (MSG, Attach Probe)

@@ -41,6 +41,7 @@ G0 G54 G17 G21 G90 G94
 (Start: Tool T1 1/4in flat end mill in the router, jogged to board front-left corner, just above the board, router off)
 
 (===== T1: 1/4in flat end mill - Kobalt trim router dial 2.5 = ~16000 RPM, ~7 min =====)
+T1
 G10 L20 P0 X0 Y0 Z0 (here = X0 Y0, temporary Z0)
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
 M0 (MSG, Attach Probe)
@@ -372,6 +373,7 @@ G0 Z#<clear_z>
 (Finish operation: T1_flat_pocket_around_island)
 
 (===== T2: 1/2in bull nose R3 - Kobalt trim router dial 2 = ~14000 RPM, ~3 min =====)
+T2
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
@@ -572,6 +574,7 @@ G0 Z#<clear_z>
 (Finish operation: T2_bull_nose_stadium_pocket)
 
 (===== T3: 1/4in ball nose - Kobalt trim router dial 3 = ~18000 RPM, <1 min =====)
+T3
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
@@ -993,6 +996,7 @@ G0 Z#<clear_z>
 (Finish operation: T3_ball_nose_wave)
 
 (===== T4: 60 deg V-bit 1/2in - Kobalt trim router dial 3 = ~18000 RPM, ~2 min =====)
+T4
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
@@ -4347,6 +4351,7 @@ G0 Z#<clear_z>
 (Finish operation: T4_V_carve_text)
 
 (===== T5: 6mm drill 118 deg - Kobalt trim router dial 1 = ~10000 RPM, <1 min =====)
+T5
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
@@ -4457,6 +4462,7 @@ G0 Z#<clear_z>
 (Finish operation: T5_peck_drill_holes)
 
 (===== T6: 90 deg chamfer 1/2in - Kobalt trim router dial 3 = ~18000 RPM, ~2 min =====)
+T6
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
@@ -4530,6 +4536,7 @@ G0 Z#<clear_z>
 (Finish operation: T6_chamfer_edges)
 
 (===== T7: tapered ball nose R0.5 10 deg - Kobalt trim router dial 3 = ~18000 RPM, ~1 min =====)
+T7
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)

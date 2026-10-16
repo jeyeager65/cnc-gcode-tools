@@ -20,4 +20,8 @@ The per-bit files list the files before them with `(PriorJob: ...)`, so each one
 simulated on the stock the earlier bits left.
 
 The hosted viewer opens them with `gcodeviewer.html?demo` (the whole job) or
-`gcodeviewer.html?demo=ViewerDemo_T4_vbit.nc` (one bit).
+`gcodeviewer.html?demo=ViewerDemo_T4_vbit.nc` (one bit), and lists them all under **Demo job** in
+its file menu (from `demo.json`).
+
+Each bit's section starts with its `T` word (`T4` for the V-bit, in both the whole job and its own
+file); FluidNC only records it, as there's no `M6`.

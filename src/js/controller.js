@@ -139,6 +139,33 @@ class Controller {
         }
         const demo = new URLSearchParams(location.search).get('demo');
         if (demo !== null) this.loadDemo(demo || undefined);
+        this.renderDemoList();
+    }
+
+    /**
+     * The demo files in the file menu (from demo/demo.json): the whole job in one file,
+     * then one file per bit, each built on the ones before it
+     */
+    async renderDemoList() {
+        const section = document.getElementById('demo-section');
+        const list = document.getElementById('demo-list');
+        if (!section || !list) return;
+        let manifest;
+        try {
+            const response = await fetch('demo/demo.json');
+            if (!response.ok) return;
+            manifest = await response.json();
+        } catch (e) {
+            return; // no demo files beside this page
+        }
+        const files = Array.isArray(manifest.files) ? manifest.files : [];
+        if (files.length === 0) return;
+        list.innerHTML = files.map(f => `<li><button type="button" data-demo="${this.escapeHtml(f.file)}">` +
+            `<span class="vw-recent-name">${this.escapeHtml(f.title || f.file)}</span></button></li>`).join('');
+        list.querySelectorAll('button[data-demo]').forEach(button => {
+            button.addEventListener('click', () => this.loadDemo(button.dataset.demo));
+        });
+        section.hidden = false;
     }
 
     async loadDemo(name = 'ViewerDemo_ALL.nc') {

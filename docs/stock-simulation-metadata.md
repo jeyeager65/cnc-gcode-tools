@@ -109,7 +109,7 @@ Programs for machines without a tool changer often skip `T` words and stop with 
 - Tool 1 is in use from the start of the program.
 - Each `M0` whose comment mentions "tool" (any case) moves to the next tool, for example `M0 (MSG, Change to Tool T2 1/8in upcut)`.
 - `M0`s whose comments don't mention a tool, such as `M0 (MSG, Attach Probe)`, don't change it.
-- An `M0` that mentions "tool" before the first bit's cuts makes that bit tool 2, with tool 1 an unused placeholder. That's fine as long as the `ToolDef` uses the same number: the FluidNC post's single-bit files do this, with `ToolDef 2`.
+- An `M0` that mentions "tool" before the first bit's cuts makes that bit tool 2, with tool 1 an unused placeholder. That's fine as long as the `ToolDef` uses the same number. A file split per bit is clearer with T words, though: a bare `T<N>` (no `M6`) only sets the tool number on FluidNC, and lets each bit keep its own number in every file. The FreeCAD FluidNC post does this.
 - Use `NAME=` for the tool names. Other CAM programs' `(Required tools:)` lists are still read (entry N is tool N), but `NAME=` takes precedence.
 - A `T` word anywhere switches the file to T numbers from that point on, so don't mix the two styles. Don't use the `(Tool N: name)` comments described below in this style either, because they change how tools are counted.
 

@@ -4,7 +4,7 @@
 (Stock: XMIN=0 XMAX=300 YMIN=0 YMAX=180 ZMIN=-19 ZMAX=0)
 (PriorJob: ViewerDemo_T1_flat.nc)
 (PriorJob: ViewerDemo_T2_bullnose.nc)
-(ToolDef 2: SHAPE=ball D=6.35 FLUTES=2 LEN=19 OAL=50 NAME=1/4in ball nose)
+(ToolDef 3: SHAPE=ball D=6.35 FLUTES=2 LEN=19 OAL=50 NAME=1/4in ball nose)
 G0 G54 G17 G21 G90 G94
 
 (===== Settings - edit here =====)
@@ -23,6 +23,7 @@ G0 G54 G17 G21 G90 G94
 #<probe_y>=5 (probe spot Y)
 
 (===== T3: 1/4in ball nose - Kobalt trim router dial 3 = ~18000 RPM, <1 min =====)
+T3
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)

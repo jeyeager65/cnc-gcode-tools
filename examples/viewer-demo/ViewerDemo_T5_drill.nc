@@ -6,7 +6,7 @@
 (PriorJob: ViewerDemo_T2_bullnose.nc)
 (PriorJob: ViewerDemo_T3_ball.nc)
 (PriorJob: ViewerDemo_T4_vbit.nc)
-(ToolDef 2: SHAPE=vbit D=6 ANGLE=118 FLUTES=2 OAL=60 NAME=6mm drill 118 deg)
+(ToolDef 5: SHAPE=vbit D=6 ANGLE=118 FLUTES=2 OAL=60 NAME=6mm drill 118 deg)
 G0 G54 G17 G21 G90 G94
 
 (===== Settings - edit here =====)
@@ -25,6 +25,7 @@ G0 G54 G17 G21 G90 G94
 #<probe_y>=5 (probe spot Y)
 
 (===== T5: 6mm drill 118 deg - Kobalt trim router dial 1 = ~10000 RPM, <1 min =====)
+T5
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)

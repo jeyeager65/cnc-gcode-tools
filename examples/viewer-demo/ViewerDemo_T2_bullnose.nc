@@ -22,6 +22,7 @@ G0 G54 G17 G21 G90 G94
 #<probe_y>=5 (probe spot Y)
 
 (===== T2: 1/2in bull nose R3 - Kobalt trim router dial 2 = ~14000 RPM, ~3 min =====)
+T2
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)

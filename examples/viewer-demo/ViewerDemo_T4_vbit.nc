@@ -5,7 +5,7 @@
 (PriorJob: ViewerDemo_T1_flat.nc)
 (PriorJob: ViewerDemo_T2_bullnose.nc)
 (PriorJob: ViewerDemo_T3_ball.nc)
-(ToolDef 2: SHAPE=vbit D=12.7 ANGLE=60 TIP=0.2 FLUTES=2 LEN=11 OAL=50 NAME=60 deg V-bit 1/2in)
+(ToolDef 4: SHAPE=vbit D=12.7 ANGLE=60 TIP=0.2 FLUTES=2 LEN=11 OAL=50 NAME=60 deg V-bit 1/2in)
 G0 G54 G17 G21 G90 G94
 
 (===== Settings - edit here =====)
@@ -22,6 +22,7 @@ G0 G54 G17 G21 G90 G94
 #<probe_y>=5 (probe spot Y)
 
 (===== T4: 60 deg V-bit 1/2in - Kobalt trim router dial 3 = ~18000 RPM, ~2 min =====)
+T4
 G4 P0 (finish queued moves, then home Z - FluidNC 4.1 rejects $HZ while moving)
 $HZ
 G0 X#<probe_x> Y#<probe_y> (probe spot: the uncut front-left corner)
