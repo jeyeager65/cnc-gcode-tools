@@ -30,7 +30,15 @@ jobs:
       
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          # One version for everything: the tag must match the VERSION file
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION doesn't match VERSION ($FILE_VERSION). Run tools/set-version.ps1 $TAG_VERSION, commit, then tag."
+            exit 1
+          fi
+          echo "VERSION=${TAG_VERSION}" >> $GITHUB_OUTPUT
       
       - name: Run build script
         shell: pwsh

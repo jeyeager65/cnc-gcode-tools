@@ -206,23 +206,14 @@ Before submitting a PR, verify:
 
 ## 📏 File Size Budget
 
-**Critical**: Total uncompressed size must stay under **135KB**
+The FluidNC extension is stored on the controller's flash, so its size matters most.
+`build.ps1` prints each build's size.
 
-Current allocations (standalone version):
-- `index.html`: ~30KB (including inlined CSS)
-- `parser.js`: ~20KB
-- `camera.js`: ~10KB
-- `renderer2d.js`: ~20KB
-- `renderer3d.js`: ~30KB
-- `animator.js`: ~8KB
-- `controller.js`: ~15KB
-
-**FluidNC version** adds:
-- `fluidnc-api.js`: ~8KB
-- `fluidnc-controller.js`: ~12KB
-- `fluidnc.css`: ~3KB
-
-**Total**: ~133KB standalone, ~156KB FluidNC (budget applies to standalone)
+| Build | Now | Keep under |
+|---|---|---|
+| FluidNC extension (`gcodeviewer.html.gz`) | ~68 KB gzipped | **80 KB gzipped** |
+| Standalone viewer (`gcodeviewer.html`) | ~224 KB minified | 260 KB minified |
+| FigUI plugin (`figui-plugin/index.html`) | ~248 KB minified | 280 KB minified |
 
 Before adding features that increase size:
 1. Check if existing code can be optimized
@@ -233,52 +224,48 @@ Before adding features that increase size:
 
 ### Manual Testing Checklist
 
+Check each change at desktop size and at phone size (820 px wide or less), in both themes.
+`examples/viewer-demo/` has a job that exercises most of the viewer: open it with
+`gcodeviewer.html?demo` from a local server.
+
 #### File Loading
-- [ ] Drag and drop works
-- [ ] File browser works
-- [ ] Progress bar displays correctly
+- [ ] Drop a file anywhere on the page, and **Open…** / **Choose file…**
+- [ ] Recent files reopen; the demo list opens each demo file
+- [ ] Progress bar along the header displays correctly
 - [ ] Large files (2-5MB) load without freezing
+- [ ] A parametric file shows **Expanded / Source** and **Download expanded G-code**
 
-#### 2D Rendering
-- [ ] Grid displays correctly
-- [ ] Pan with mouse works
-- [ ] Zoom with wheel works
-- [ ] Zoom centers on mouse position
-- [ ] Double-click resets view
-- [ ] Coordinate display updates on hover
+#### Views
+- [ ] Opens in 3D, fitted to the toolpaths (or the stock when it's shown)
+- [ ] 3D: drag rotates, right-drag pans, wheel and **+ / −** zoom
+- [ ] 2D: drag pans, wheel zooms to the cursor, coordinates follow the mouse
+- [ ] **Fit** and double-click reset the view
+- [ ] View settings: grid size, axes and tool marker toggles, theme
 
-#### 3D Rendering
-- [ ] Model renders correctly
-- [ ] Rotation with drag works
-- [ ] Pan with Shift+drag works
-- [ ] Zoom with wheel works
-- [ ] Depth testing works (no z-fighting)
-- [ ] Axes display correctly
+#### Transport Bar
+- [ ] Play / pause, back to start, step back / forward
+- [ ] Scrub bar seeks; tool-change ticks and M0 diamonds sit where they happen
+- [ ] Speed menu; time, segment and line readouts update
+- [ ] Keyboard: Space, ← →, Home / End, [ ], V
+- [ ] Messages show; M0 stops wait for Resume; probes touch the stock
 
-#### Animation
-- [ ] Play/pause works
-- [ ] Reset works
-- [ ] Next/previous line works
-- [ ] Speed slider works
-- [ ] Progress bar updates
-- [ ] Line counter updates
+#### Sidebar
+- [ ] Summary shows the time, segments, tools and ranges
+- [ ] Toolpaths: visibility and color per tool and for rapids; the cutting tool is outlined
+- [ ] Z layers slider hides paths outside its range
+- [ ] Stock simulation carves as the animation plays; earlier jobs load (PriorJob)
+- [ ] Warnings list rapids into the stock and cuts deeper than the flutes
+- [ ] Sections fold and stay folded after a reload
 
-#### Themes
-- [ ] Light theme displays correctly
-- [ ] Dark theme displays correctly
-- [ ] Theme persists after refresh
-- [ ] Toggle button updates
+#### Phone Layout
+- [ ] Tabs: Files, View, Job, G-code
+- [ ] Menus open as bottom sheets; buttons are big enough to tap
 
-#### Layer Filter
-- [ ] Min Z filter works
-- [ ] Max Z filter works
-- [ ] Combined filters work
-- [ ] Clear filters works
-
-#### Screenshot
-- [ ] 2D screenshot exports correctly
-- [ ] 3D screenshot exports correctly
-- [ ] Filename is descriptive
+#### Hosts
+- [ ] FluidNC WebUI: SD browser, Preview, Run on machine, following the job, feed hold / resume, a job started elsewhere
+- [ ] FigUI: SD browser, Open in FigUI, following FigUI's job, its theme, settings kept after reopening
+- [ ] VS Code: View GCode opens the viewer; earlier jobs load from the file's folder
+- [ ] Font Creator: the G-code preview still works (it keeps its own layout)
 
 ### Browser Testing
 Test in:
@@ -372,18 +359,23 @@ What other approaches did you consider?
 
 ## 📦 Release Process
 
-Releases are automated via GitHub Actions:
+Everything is released together with one version, kept in the `VERSION` file:
 
 1. Maintainer merges approved PRs
-2. Maintainer creates and pushes version tag:
+2. Maintainer sets the version and adds its changelog section:
+   ```powershell
+   .\tools\set-version.ps1 1.2.0   # VERSION and vscode-extension/package.json
+   ```
+   then a `## 1.2.0` section in `vscode-extension/CHANGELOG.md`, and commits
+3. Maintainer creates and pushes the matching tag:
    ```bash
    git tag v1.2.0
    git push origin v1.2.0
    ```
-3. GitHub Actions automatically:
-   - Minifies code
-   - Creates single-file HTML
-   - Gzips files
+4. GitHub Actions automatically:
+   - Checks the tag matches `VERSION`
+   - Minifies code and creates the single-file HTML builds
+   - Gzips the FluidNC extension, zips the FigUI plugin, packages the VS Code extension
    - Generates changelog
    - Creates release
    - Deploys to GitHub Pages

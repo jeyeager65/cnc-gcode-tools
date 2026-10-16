@@ -4,11 +4,11 @@
 ![License](https://img.shields.io/github/license/jeyeager65/cnc-gcode-tools?style=flat-square)
 ![Size](https://img.shields.io/badge/size-~60--68KB%20gzipped-blue?style=flat-square)
 
-A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL CNC machines. Features both 2D and 3D visualization modes, layer-by-layer animation, multi-tool support, and runs entirely client-side on embedded devices with limited storage.
+A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL CNC machines. It shows the toolpaths in 3D (or 2D), carves the stock as the job plays in real time, expands parametric G-code, and follows a running job. It runs entirely client-side: in a browser, in the FluidNC WebUI on the controller itself, as a FigUI plugin and in VS Code, on a desktop or a phone.
 
 ## ✨ Features
 
-- ✅ **2D & 3D Visualization** - Switch between Canvas 2D and WebGL 3D views
+- ✅ **2D & 3D Visualization** - Opens in WebGL 3D; switch to Canvas 2D for a top view
 - ✅ **Multi-Tool Support** - Color-coded toolpaths with individual tool visibility controls
 - ✅ **Rapid Move Control** - Toggle visibility and customize color of G0 travel moves
 - ✅ **Layer-by-Layer Animation** - Play, pause, and step through toolpath execution
@@ -26,11 +26,12 @@ A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL C
 
 ## 🖼️ Screenshots
 
-![2D View Light Mode](docs/screenshot-2d-light.png)
-*2D visualization with grid overlay and coordinate display*
+![The viewer on a desktop](docs/viewer-desktop.png)
+*The demo job part-way through: G-code, the stock carved in 3D, toolpaths and the stock simulation*
 
-![3D View Dark Mode](docs/screenshot-3d-dark.png)
-*3D WebGL rendering with orbital camera controls*
+<img src="docs/viewer-phone.png" alt="The viewer on a phone" width="300">
+
+*On a phone: one pane at a time, with tabs along the bottom*
 
 ## 🚀 Quick Start
 
@@ -68,8 +69,8 @@ curl -LO https://github.com/jeyeager65/cnc-gcode-tools/releases/latest/download/
 curl -F "file=@gcodeviewer.html.gz" http://your-device-ip/files
 ```
 
-#### Configure Web Server
-FluidNC automatically serves gzipped files. Access at: `http://your-device-ip/gcodeviewer.html`
+#### Add it to the WebUI
+FluidNC serves gzipped files, so the file is `/gcodeviewer.html` on the controller. Add it to WebUI v3 as an extension panel with that page as its source. It talks to the machine through the WebUI, so opened on its own (`http://your-device-ip/gcodeviewer.html`) it can't list the SD card or follow a job.
 
 The FluidNC version includes:
 - SD card file browser with folder navigation, **Preview** and **Run on machine**
@@ -175,7 +176,7 @@ For files without these comments, the panel estimates the stock from the toolpat
 
 With **Current layer only** on (under "Show toolpaths on the stock"), the animation only draws the toolpaths of the layer being cut, from where the tool started that Z level. Earlier layers are already visible in the stock.
 
-While the stock is shown, Reset View and double-click frame the whole stock. The 3D grid stands for the machine bed. It's sized from the machine's max travel (read from the connected machine in the FluidNC extension, or from a loaded `config.yaml`), or else made a little larger than the stock. A size you type in yourself is kept.
+While the stock is shown, **Fit** and double-click frame the whole stock. The 3D grid stands for the machine bed. It's sized from the machine's max travel (read from the connected machine in the FluidNC extension, or from a loaded `config.yaml`), or else made a little larger than the stock. A size you type in yourself is kept.
 
 Rapid (G0) moves that cut into the stock, and cuts deeper than a tool's flute length, are listed under **Warnings**. A machine with a vertical tool can't cut undercuts, so the top surface describes the part fully. Accuracy is limited by the grid: the cell size is shown in the panel.
 
@@ -228,7 +229,9 @@ cnc-gcode-tools/
 │   ├── stock_sim_demo.nc         # Stock simulation demo (header with stock and tool sizes)
 │   ├── viewer-demo/              # Demo job from the FreeCAD FluidNC post: 7 bit types, probing, M0s; all-in-one and one file per bit (PriorJob)
 │   └── *-font.json               # Sample Font Creator fonts
-├── docs/                         # README screenshots
+├── docs/                         # Screenshots (README, landing page) and the stock simulation metadata format
+├── tools/                        # set-version.ps1, record-video/
+├── VERSION                       # The version of everything here
 ├── dist/                         # Build output (generated)
 ├── build.ps1                     # Build script
 ├── localtest.ps1                 # Local build & deploy (git-ignored)
@@ -278,11 +281,18 @@ The build process:
 - Packages the VS Code extension with `vsce` (needs Node.js 20+)
 - Output: `gcodeviewer.html` (standalone), `gcodeviewer.html.gz` (FluidNC), `figui-plugin/` and `figui-plugin.zip` (FigUI), `fontcreator.html`, and `cnc-gcode-tools-<version>.vsix`
 
+### Versioning
+Everything here shares one version: the standalone viewer, the FluidNC extension, the FigUI plugin, the VS Code extension and the landing page. It lives in the `VERSION` file; `build.ps1` stamps it into the pages and the plugin's `plugin.json`, and stops if `vscode-extension/package.json` doesn't match. To change it:
+```powershell
+.\tools\set-version.ps1 0.7.0   # updates VERSION and the VS Code extension's package.json
+```
+Then add a section for it to `vscode-extension/CHANGELOG.md`.
+
 ### Building for Release
-Builds are automated via GitHub Actions when you push a version tag:
+Builds are automated via GitHub Actions when you push a version tag. The tag must match `VERSION`, or the release stops:
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 This automatically:

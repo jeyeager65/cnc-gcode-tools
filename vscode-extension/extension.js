@@ -213,7 +213,7 @@ function getViewerHtml(webview, context, filename, theme) {
 <link rel="stylesheet" href="${cssUri}">
 <link rel="stylesheet" href="${viewerCssUri}">
 </head>
-<body data-host="vscode" data-file-name="${fileEsc}">
+<body data-host="vscode" data-file-name="${fileEsc}" data-version="v${context.extension.packageJSON.version}">
 <!-- The layout is built by viewer-ui.js -->
 <div id="viewer-root"></div>
 

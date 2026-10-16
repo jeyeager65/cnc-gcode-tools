@@ -18,15 +18,18 @@ if (-not $terserInstalled) {
     npm install -g terser
 }
 
-# Version from git or default
-$version = "dev"
-try {
-    $gitTag = git describe --tags --abbrev=0 2>$null
-    if ($gitTag) {
-        $version = $gitTag
-    }
-} catch {
-    Write-Host "No git tags found, using version: $version" -ForegroundColor Yellow
+# Version: the VERSION file is the one source for everything built here (set it with
+# tools\set-version.ps1). The VS Code extension's package.json must match it.
+$versionNumber = (Get-Content "VERSION" -Raw).Trim()
+if ($versionNumber -notmatch '^\d+\.\d+\.\d+$') {
+    Write-Host "VERSION must hold a version like 0.6.0, not '$versionNumber'" -ForegroundColor Red
+    exit 1
+}
+$version = "v$versionNumber"
+$extVersion = (Get-Content "vscode-extension/package.json" -Raw | ConvertFrom-Json).version
+if ($extVersion -ne $versionNumber) {
+    Write-Host "vscode-extension/package.json is $extVersion but VERSION is $versionNumber - run .\tools\set-version.ps1 $versionNumber" -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "Version: $version" -ForegroundColor Green
@@ -287,7 +290,7 @@ foreach ($build in $builds) {
 
 # FigUI plugin folder: the built page, its manifest (with this version) and icon.
 # Install it in FigUI (Plugins > Add, choosing the folder) or copy it to /sd/plugins/.
-$pluginVersion = if ($version -match '^v?(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
+$pluginVersion = $versionNumber
 (Get-Content "figui-plugin/plugin.json" -Raw) -replace '\{\{PLUGIN_VERSION\}\}', $pluginVersion |
     Set-Content "$distDir/figui-plugin/plugin.json" -NoNewline
 Copy-Item "figui-plugin/icon.png" "$distDir/figui-plugin/icon.png"
@@ -303,7 +306,7 @@ New-Item -Path "dist/.nojekyll" -ItemType File -Force | Out-Null
 
 # Copy landing page to dist for GitHub Pages
 Write-Host "Copying index.html landing page for GitHub Pages..." -ForegroundColor Cyan
-Copy-Item -Path "src/index.html" -Destination "dist/index.html"
+(Get-Content "src/index.html" -Raw) -replace '{{VERSION}}', $version | Set-Content "dist/index.html" -NoNewline
 Copy-Item -Path "docs/viewer-desktop.png", "docs/viewer-phone.png" -Destination "dist"
 # Demo files for gcodeviewer.html?demo (and its "Try the demo file" button)
 New-Item -ItemType Directory -Force -Path "dist/demo" | Out-Null

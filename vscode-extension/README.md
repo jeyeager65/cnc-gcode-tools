@@ -32,12 +32,16 @@ Available from the Command Palette (`Ctrl+Shift+P`), the editor title bar and th
 | **CNC GCode: Validate GCode** | Checks the file against what FluidNC supports and lists the results in the Problems panel: unsupported G/M codes and axes, unbalanced O-word blocks, subroutines (which FluidNC doesn't support), undefined variables and bad expressions. Machine values such as `#5221` or `#<_x>` are noted as information, since they only exist on the controller. |
 
 ### Toolpath viewer
-- 2D and 3D views: the 2D view matches the machine (X right, Y up), and the 3D view opens at an angle that shows depth
-- 3D orbit that keeps machine Z upright: drag to rotate, right-drag to pan, scroll to zoom
+The same viewer as the [web version](https://jeyeager65.github.io/cnc-gcode-tools/), beside the editor:
+- Opens in 3D, at an angle that shows depth; **2D** gives the machine's top view (X right, Y up)
+- 3D orbit that keeps machine Z upright: drag to rotate, right-drag to pan, scroll or **+ / −** to zoom
 - **3D mouse support** (3Dconnexion SpaceMouse) through the browser Gamepad API
-- Step-by-step animation with estimated run time
-- Per-tool colors and visibility, a rapid-move (G0) toggle, and a Z-height layer filter
-- **Stock simulation**: the machined part as a 3D solid, from `(Stock: ...)` and `(ToolDef N: ...)` header comments or sizes entered in the viewer
+- A transport bar: real-time playback from each move's estimated time (0.1x to 500x), a scrub bar with tool changes and `M0` pauses marked, and keyboard shortcuts (Space, arrows, Home/End, `[ ]`, V)
+- `(MSG, …)` messages, `M0` stops and simulated Z probing as the job plays
+- Per-tool colors, visibility and times, rapid moves (G0), and a Z-height layer filter
+- **Stock simulation**: the machined part as a 3D solid, carved as the job plays, from `(Stock: ...)` and `(ToolDef N: ...)` header comments or sizes entered in the viewer, with earlier files of a split job (`PriorJob`) read from the same folder
+- The G-code pane is hidden by default (the editor shows the file); **G-code** on the view's toolbar shows it
+- A narrow panel gets the phone layout, with tabs for View, Job and G-code
 
 ## Parametric G-code
 

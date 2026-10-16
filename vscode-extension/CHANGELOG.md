@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+The version now matches the web viewer, the FluidNC extension and the FigUI plugin, which are released together.
 
 - Viewer: new layout. It opens in 3D, with a transport bar under the view (scrub bar with tool-change and M0 marks, speed menu, keyboard shortcuts), the view's own toolbar (2D/3D, Fit, view settings, zoom buttons) and a compact sidebar (summary, toolpaths with the rapids and Z layers, stock simulation, warnings). The G-code pane can be shown beside the view. Narrow panels get a tabbed phone layout.
 
