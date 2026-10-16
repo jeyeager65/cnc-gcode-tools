@@ -92,6 +92,7 @@ class Controller {
         on('btn-zoom-in', 'click', () => this.zoomStep(-1));
         on('btn-zoom-out', 'click', () => this.zoomStep(1));
         on('speed-select', 'change', (e) => this.animator.setSpeed(parseFloat(e.target.value)));
+        on('btn-download-expanded', 'click', () => this.saveExpanded());
 
         // Axes and the tool marker can be hidden; remembered
         for (const [id, key, prop] of [['show-axes', 'vwShowAxes', 'showAxes'], ['show-tool', 'vwShowTool', 'showToolMarker']]) {
@@ -199,6 +200,43 @@ class Controller {
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    /**
+     * A parametric file as plain G-code, expanded as it's drawn here (same machine and
+     * entered values), with its comments and messages, for senders that can't expand it.
+     * Returns { name, text } (part.nc -> part.expanded.nc), or null for a plain file.
+     */
+    expandedFile() {
+        const exp = this.gcodeExpansion;
+        if (!exp || !exp.output || typeof expandLines !== 'function') return null;
+        const source = this.fileName || 'program.nc';
+        const { output } = expandLines(exp.sourceText.split(/\r?\n/), source, {
+            keepComments: true,
+            machineValues: this.parser.machineValues,
+            inputs: this.parser.inputValues
+        });
+        const name = /\.[^./\\]+$/.test(source)
+            ? source.replace(/(\.[^./\\]+)$/, '.expanded$1')
+            : source + '.expanded.nc';
+        return { name, text: output };
+    }
+
+    /**
+     * Download the expanded G-code. Hosts that can't download (the FigUI plugin's
+     * sandbox) save it their own way.
+     */
+    saveExpanded() {
+        const file = this.expandedFile();
+        if (!file) return;
+        const url = URL.createObjectURL(new Blob([file.text], { type: 'text/plain' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     /**
@@ -1346,6 +1384,8 @@ class Controller {
             'The transport bar plays the moves only.';
         const warn = document.getElementById('warn-section');
         if (warn) warn.style.display = '';
+        const actions = document.getElementById('sum-actions');
+        if (actions) actions.hidden = !(this.gcodeExpansion && this.gcodeExpansion.output);
         this.updateWarnings();
         const speed = document.getElementById('speed-select');
         if (speed) this.animator.setSpeed(parseFloat(speed.value));

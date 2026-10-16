@@ -228,6 +228,11 @@ const ViewerUI = {
             <div class="vw-summary" id="summary">
                 <div class="vw-sum-main"><span class="vw-sum-time" id="sum-time">–</span><span class="vw-muted" id="sum-meta">No file loaded</span></div>
                 <div class="vw-sum-ranges" id="sum-ranges"></div>
+                ${this.host === 'vscode' ? '' : `<div class="vw-sum-actions" id="sum-actions" hidden>
+                    <button type="button" class="vw-btn vw-small" id="btn-download-expanded"
+                        title="The parametric file as plain G-code, as drawn here (with the machine values used for this preview), for senders that can't expand it">${
+                        cfg.openInHost ? 'Save expanded copy to the SD card' : 'Download expanded G-code'}</button>
+                </div>`}
             </div>
             <section class="vw-section" id="tool-panel" data-section="toolpaths" style="display: none;">
                 <button type="button" class="vw-section-head" aria-expanded="true">${i.chevron}<span>Toolpaths</span></button>

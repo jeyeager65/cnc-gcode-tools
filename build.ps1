@@ -162,19 +162,6 @@ $builds = @(
     <script src="js/font-creator-app.js"></script>
 "@
         CssFiles = @("src/css/common.css", "src/css/font-creator.css")
-    },
-    @{
-        Name = "GCode Expander"
-        SourceHtml = "src/gcodeexpand.html"
-        OutputName = "gcodeexpand"
-        SkipGzip = $true
-        JsFiles = @(
-            "src/js/gcode-expander.js"
-        )
-        ScriptTags = @"
-<script src="js/gcode-expander.js"></script>
-"@
-        CssFiles = @("src/css/common.css")
     }
 )
 
@@ -317,6 +304,7 @@ New-Item -Path "dist/.nojekyll" -ItemType File -Force | Out-Null
 # Copy landing page to dist for GitHub Pages
 Write-Host "Copying index.html landing page for GitHub Pages..." -ForegroundColor Cyan
 Copy-Item -Path "src/index.html" -Destination "dist/index.html"
+Copy-Item -Path "docs/viewer-desktop.png", "docs/viewer-phone.png" -Destination "dist"
 
 # Package the VS Code extension (.vsix) for "Install from VSIX..."
 # It is staged under dist/ so the viewer files it needs from src/ can be added

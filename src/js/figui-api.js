@@ -96,6 +96,10 @@ class FigUIAPI {
         return text;
     }
 
+    writeSDFile(path, content) {
+        return this.bridge.call('writeFile', { path, content, fs: 'sd' }, 180000);
+    }
+
     /**
      * Open a file in FigUI's own G-code viewer (where it's run from)
      */

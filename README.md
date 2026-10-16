@@ -18,7 +18,7 @@ A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL C
 - ✅ **Layer Filtering** - Show/hide specific Z-height ranges
 - ✅ **GCode Syntax Highlighting** - Color-coded GCode display with line numbers
 - ✅ **Stock Simulation** - See the machined part as a 3D solid, carved as the animation plays, from stock and tool sizes in the file header or entered in the viewer
-- ✅ **Parametric GCode Preview** - FluidNC parameters, conditionals and loops are expanded automatically, with an Expanded/Source toggle
+- ✅ **Parametric GCode Preview** - FluidNC parameters, conditionals and loops are expanded automatically, with an Expanded/Source toggle and a download of the expanded G-code
 - ✅ **Completely Offline** - No data transmission, all processing is local
 - ✅ **Touch Optimized** - Pinch zoom, two-finger rotate/pan for tablets
 - ✅ **FluidNC WebUI v3 Extension** - Custom build for FluidNC WebUI v3, with a phone layout
@@ -196,7 +196,6 @@ cnc-gcode-tools/
 │   ├── gcodeviewer-fluidnc.html  # FluidNC WebUI extension with SD browser
 │   ├── gcodeviewer-figui.html    # FigUI plugin
 │   ├── fontcreator.html          # Font Creator UI
-│   ├── gcodeexpand.html          # Parametric GCode expander UI
 │   ├── js/
 │   │   ├── prefs.js              # Settings storage (localStorage, or the host's)
 │   │   ├── viewer-ui.js          # Viewer layout shared by every host (tabs, popovers, sections)
@@ -246,7 +245,7 @@ git clone https://github.com/jeyeager65/cnc-gcode-tools.git
 cd cnc-gcode-tools
 
 # Open in browser
-# Simply open src/gcodeviewer.html or src/gcodeviewer-fluidnc.html in your browser
+# Simply open src/gcodeviewer.html in your browser (the FluidNC and FigUI pages need their host)
 # Or use a local server (recommended for FluidNC version):
 python -m http.server 8000
 # Then visit http://localhost:8000/src/gcodeviewer.html or gcodeviewer-fluidnc.html
@@ -254,7 +253,7 @@ python -m http.server 8000
 
 ### Making Changes
 1. Edit files in `src/` directory
-2. CSS is in `src/css/` - `common.css` is shared, `fluidnc.css` is FluidNC-only
+2. CSS is in `src/css/` - `common.css` and `viewer.css` are shared, `fluidnc.css` and `figui.css` are host-only
 3. JavaScript is in `src/js/` - organized by functionality
 4. Test in browser (refresh to see changes)
 5. Check browser console for errors
@@ -275,7 +274,7 @@ The build process:
 - Removes HTML comments and excess whitespace
 - Creates a gzipped FluidNC version for deployment
 - Packages the VS Code extension with `vsce` (needs Node.js 20+)
-- Output: `gcodeviewer.html` (standalone), `gcodeviewer.html.gz` (FluidNC), `fontcreator.html`, `gcodeexpand.html`, and `cnc-gcode-tools-<version>.vsix`
+- Output: `gcodeviewer.html` (standalone), `gcodeviewer.html.gz` (FluidNC), `figui-plugin/` and `figui-plugin.zip` (FigUI), `fontcreator.html`, and `cnc-gcode-tools-<version>.vsix`
 
 ### Building for Release
 Builds are automated via GitHub Actions when you push a version tag:
@@ -287,7 +286,7 @@ git push origin v1.0.0
 This automatically:
 - Runs the build.ps1 script using PowerShell
 - Minifies and inlines all CSS and JavaScript
-- Creates the standalone and FluidNC viewers, Font Creator, GCode Expander, and VS Code extension
+- Creates the standalone viewer, the FluidNC extension, the FigUI plugin, the Font Creator and the VS Code extension
 - Generates changelog from commit messages
 - Deploys to GitHub Pages
 - Creates GitHub Release with all build artifacts
@@ -326,7 +325,7 @@ This application is **100% client-side** and **completely offline**:
 | G21 | Millimeters mode | ✅ Full |
 | G90 | Absolute positioning | ✅ Full |
 | G91 | Relative positioning | ✅ Full |
-| G38.2–G38.5 | Probe | ⚠️ Drawn dashed to the full programmed travel (the contact point isn't known) |
+| G38.2–G38.5 | Probe | ✅ With the stock known, Z probes stop on the stock or a `P` touch plate (see Messages, M0 Pauses and Probing); otherwise drawn to the full programmed travel |
 | G10 L2/L20, G92 | Set work offsets | ✅ Later coordinates use the new offset; nothing is drawn |
 | G54–G59.3 | Work coordinate systems | ✅ Full |
 | G53 | Machine coordinates | ⚠️ Taken relative to the work origin the file starts in |
@@ -346,11 +345,13 @@ Files that use [FluidNC's parametric syntax](http://wiki.fluidnc.com/en/features
 - Operators: `+ - * /`, `**` (power), `MOD`, `EQ`, `NE`, `LT`, `GT`, `LE`, `GE`, `AND`, `OR`, `XOR`; `ATAN[y]/[x]` gives the two-argument arctangent
 - Control flow: `if` / `elseif` / `else` / `endif`, `while` / `endwhile`, `do` / `while`, `repeat` / `endrepeat`, `break`, `continue`
 
-Config values such as `#</axes/x/max_travel_mm>` can be read from your FluidNC `config.yaml`: use **Load config.yaml** under Load File in the standalone viewer (it's remembered in the browser), or the `cncGcode.fluidncConfig` setting in the VS Code extension. Live machine state such as `#<_x>` and numbered system parameters such as `#5221` only exist on the controller, so those viewers report lines that use them as unresolved.
+Config values such as `#</axes/x/max_travel_mm>` can be read from your FluidNC `config.yaml`: use the **config.yaml** button in the standalone viewer's header (it's remembered in the browser), or the `cncGcode.fluidncConfig` setting in the VS Code extension. Live machine state such as `#<_x>` and numbered system parameters such as `#5221` only exist on the controller, so those viewers report lines that use them as unresolved.
 
 The FluidNC WebUI extension needs no config file: when you preview a parametric file, it reads every machine value the file uses straight from the controller (config values with `$/...` queries, globals and numbered parameters with the `D` word). The values are a snapshot taken when you preview, so they match the start of the job. They're only read while the machine is Idle.
 
 The GCode panel shows the **Expanded** code by default. Switch to **Source** to see the original file: the line that produced the current move is highlighted, and clicking a line jumps to the next move it produces (click again to step through loop iterations). Expansion warnings, such as undefined variables, are listed above the code.
+
+**Download expanded G-code** (under the summary, for parametric files) saves the program as plain G-code, as it's drawn: with the machine and entered values used for the preview, and its comments and messages kept. Use it with senders that can't expand parametric files. The file is named after the original, `part.nc` → `part.expanded.nc`. The FigUI plugin can't download files, so it saves the copy next to the original on the SD card instead; in VS Code, use the **Expand GCode** command.
 
 In the FluidNC extension, progress tracking for a running parametric file is based on estimated time only, because FluidNC reports progress through the source file rather than the expanded moves.
 

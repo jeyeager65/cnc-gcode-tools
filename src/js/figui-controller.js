@@ -24,6 +24,32 @@ class FigUIController extends FluidNCController {
         }
     }
 
+    /**
+     * The sandbox can't download files: the expanded copy goes next to the original on
+     * the SD card instead (part.nc -> part.expanded.nc), ready to run from FigUI
+     */
+    async saveExpanded() {
+        const file = this.expandedFile();
+        const button = document.getElementById('btn-download-expanded');
+        if (!file || !this.currentFilePath || !button) return;
+        const folder = this.currentFilePath.slice(0, this.currentFilePath.lastIndexOf('/') + 1) || '/';
+        const label = button.textContent;
+        button.disabled = true;
+        try {
+            await this.fluidAPI.writeSDFile(folder + file.name, file.text);
+            button.textContent = `Saved as ${file.name}`;
+            if (this.currentPath === folder.replace(/\/$/, '') || (folder === '/' && this.currentPath === '/')) {
+                this.loadSDFiles(this.currentPath);
+            }
+        } catch (e) {
+            button.textContent = 'Couldn\'t save: ' + e.message;
+        }
+        setTimeout(() => {
+            button.textContent = label;
+            button.disabled = false;
+        }, 3000);
+    }
+
     // Preview a running file again from the card: no local cache in the plugin's iframe
     async cacheFile() { }
 

@@ -43,7 +43,6 @@ jobs:
           GCODEVIEWER_SIZE=$(stat -c%s dist/gcodeviewer.html | numfmt --to=iec-i --suffix=B)
           GCODEVIEWER_GZ_SIZE=$(stat -c%s dist/gcodeviewer.html.gz | numfmt --to=iec-i --suffix=B)
           FONTCREATOR_SIZE=$(stat -c%s dist/fontcreator.html | numfmt --to=iec-i --suffix=B)
-          GCODEEXPAND_SIZE=$(stat -c%s dist/gcodeexpand.html | numfmt --to=iec-i --suffix=B)
           FIGUI_SIZE=$(stat -c%s dist/figui-plugin.zip | numfmt --to=iec-i --suffix=B)
           echo "FIGUI_SIZE=${FIGUI_SIZE}" >> $GITHUB_OUTPUT
           VSIX_FILE=$(ls dist/cnc-gcode-tools-*.vsix)
@@ -55,14 +54,12 @@ jobs:
           echo "GCODEVIEWER_SIZE=${GCODEVIEWER_SIZE}" >> $GITHUB_OUTPUT
           echo "GCODEVIEWER_GZ_SIZE=${GCODEVIEWER_GZ_SIZE}" >> $GITHUB_OUTPUT
           echo "FONTCREATOR_SIZE=${FONTCREATOR_SIZE}" >> $GITHUB_OUTPUT
-          echo "GCODEEXPAND_SIZE=${GCODEEXPAND_SIZE}" >> $GITHUB_OUTPUT
           
           echo "File Sizes:"
           echo "  Source: ${SOURCE_SIZE}"
           echo "  GCode Viewer: ${GCODEVIEWER_SIZE}"
           echo "  FluidNC Extension: ${GCODEVIEWER_GZ_SIZE} (gzipped)"
           echo "  Font Creator: ${FONTCREATOR_SIZE}"
-          echo "  GCode Expander: ${GCODEEXPAND_SIZE}"
           echo "  VS Code Extension: ${VSIX_SIZE}"
       
       - name: Generate changelog
@@ -124,7 +121,6 @@ jobs:
             dist/gcodeviewer.html
             dist/gcodeviewer.html.gz
             dist/fontcreator.html
-            dist/gcodeexpand.html
             dist/cnc-gcode-tools-*.vsix
             dist/figui-plugin.zip
             dist/CHANGELOG.md
@@ -138,7 +134,6 @@ jobs:
             - **GCode Viewer**: ${{ steps.sizes.outputs.GCODEVIEWER_SIZE }}
             - **FluidNC Extension**: ${{ steps.sizes.outputs.GCODEVIEWER_GZ_SIZE }} (gzipped)
             - **Font Creator**: ${{ steps.sizes.outputs.FONTCREATOR_SIZE }}
-            - **GCode Expander**: ${{ steps.sizes.outputs.GCODEEXPAND_SIZE }}
             - **VS Code Extension**: ${{ steps.sizes.outputs.VSIX_SIZE }}
             - **FigUI Plugin**: ${{ steps.sizes.outputs.FIGUI_SIZE }} (zip; unzip and add the folder in FigUI's Plugins tab)
             
