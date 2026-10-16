@@ -1,154 +1,35 @@
-/* FluidNC-specific styles */
+/*
+ * FluidNC WebUI extension. The WebUI copies its own stylesheets into the extension's
+ * iframe (after ours) and adds .body-extension to the body. viewer.css scopes its rules
+ * under .vw, which outranks the WebUI's element and single-class rules; these cover
+ * the page itself.
+ */
 
-/* Override ESP3D WebUI styles for dark mode compatibility */
-body,
 html,
-.container,
-.panel,
-.sidebar,
-.left-sidebar,
-header,
-footer,
-button,
-input,
-select,
-textarea,
-label,
-div {
-    background-color: inherit !important;
-    color: inherit !important;
+body.body-extension,
+html body.vw-body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: var(--vw-bg) !important;
+    color: var(--vw-text) !important;
+    font-size: 13px;
+    line-height: 1.35;
 }
 
-/* Restore specific backgrounds and colors */
-body {
-    background-color: var(--bg-color) !important;
-    color: var(--text-color) !important;
+/* The WebUI's form styles (Spectre) on bare elements */
+.vw input[type="checkbox"] {
+    position: static !important;
+    opacity: 1 !important;
+    clip: auto !important;
+    appearance: auto;
+    -webkit-appearance: checkbox;
 }
 
-.container {
-    background-color: var(--bg-color) !important;
-}
-
-header {
-    background-color: var(--panel-bg) !important;
-    color: var(--text-color) !important;
-}
-
-footer {
-    background-color: var(--panel-bg) !important;
-    color: var(--text-color) !important;
-}
-
-.sidebar,
-.left-sidebar {
-    background-color: var(--panel-bg) !important;
-    color: var(--text-color) !important;
-}
-
-.panel {
-    background-color: var(--bg-color) !important;
-    color: var(--text-color) !important;
-}
-
-.panel {
-    border: 1px solid var(--border-color) !important;
-}
-
-button {
-    background-color: var(--button-bg) !important;
-    color: var(--text-color) !important;
-}
-
-button:hover {
-    background-color: var(--button-hover-bg) !important;
-}
-
-input,
-select,
-textarea {
-    background-color: var(--input-bg) !important;
-    color: var(--text-color) !important;
-    border-color: var(--border-color) !important;
-}
-
-/* File Browser */
-.file-browser {
-    max-height: 240px;
-    overflow-y: auto;
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    background-color: var(--canvas-bg);
-}
-
-.file-item {
-    padding: 6px;
-    border-bottom: 1px solid var(--border-color);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    transition: background-color 0.2s;
-    background-color: var(--canvas-bg) !important;
-    color: var(--text-color) !important;
-}
-
-.file-item:hover {
-    background-color: var(--panel-bg) !important;
-}
-
-.file-item.selected {
-    background-color: var(--cut-color) !important;
-    color: var(--bg-color) !important;
-}
-
-.file-icon {
-    font-size: 20px;
-}
-
-.file-info {
-    flex: 1;
-}
-
-.file-name {
-    font-weight: 600;
-    font-size: 14px;
-}
-
-.file-size {
-    font-size: 11px;
-    opacity: 0.7;
-}
-
-/* Breadcrumb Navigation */
-.breadcrumb {
-    display: flex;
-    gap: 5px;
-    padding: 8px;
-    background-color: var(--panel-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    margin-bottom: 10px;
-    font-size: 12px;
-}
-
-.breadcrumb-item {
-    cursor: pointer;
-    color: var(--cut-color);
-}
-
-.breadcrumb-item:hover {
-    text-decoration: underline;
-}
-
-.breadcrumb-separator {
-    opacity: 0.5;
-}
-
-/* Progress Bar */
-.progress-bar {
-    background-color: var(--border-color) !important;
-}
-
-.progress-fill {
-    background-color: var(--cut-color) !important;
+.vw .vw-tab,
+.vw .vw-seg button,
+.vw .vw-section-head,
+.vw .file-item {
+    box-shadow: none;
+    text-transform: none;
+    letter-spacing: normal;
 }

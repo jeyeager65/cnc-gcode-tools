@@ -1,25 +1,26 @@
 /**
  * FluidNC Controller Extension
- * Extends the base Controller class with FluidNC-specific functionality
+ * Extends the base Controller with the FluidNC WebUI extension's features: the SD card
+ * browser, Preview and Run, and following a job while it runs (started here or anywhere
+ * else), with a feed hold button.
+ *
+ * It talks to the machine through an API object: FluidNCAPI (WebUI v3 postMessage) here,
+ * or the FigUI plugin bridge (figui-api.js) with the same methods: listSDFiles,
+ * readSDFile, runSDFile, sendCommandNoWait, readSetting, queryParameter, getMaxTravelX/Y,
+ * getMotionParameters and on('stream').
  */
 
-// Initialize FluidNC API
-const fluidAPI = new FluidNCAPI();
-
-// Extend Controller with FluidNC features
 class FluidNCController extends Controller {
-    constructor() {
+    constructor(api) {
         super();
-        this.fluidAPI = fluidAPI;
+        this.fluidAPI = api;
         this.currentPath = '/';
         this.selectedFile = null;
-        this.hasRefittedCamera = false; // Track if we've refitted after tab switch
-        this.isRunning = false; // Track if a file is currently running
-        this.runStartTime = null; // Track when the run started
-        this.statusUpdateInterval = null; // Interval for updating elapsed time
-        this.lastStatusTool = -1; // Track last tool displayed in status panel
-        this.runningFilePath = null; // Track the file path currently running
+        this.isRunning = false; // True while a followed job is moving (State Run)
+        this.following = false; // Following a job on the machine (running or held)
+        this.runningFilePath = null; // The file the machine is running (from its status)
         this.currentFilePath = null; // Track current loaded file path
+        this.machineState = null;
         this.setupFluidNCListeners();
         this.loadSDFiles();
         this.syncGridFromFluidNC(); // Auto-sync grid dimensions on load
@@ -31,35 +32,17 @@ class FluidNCController extends Controller {
      * Setup FluidNC-specific event listeners
      */
     setupFluidNCListeners() {
-        // Load file button
-        document.getElementById('btn-load-file').addEventListener('click', () => {
-            if (this.selectedFile) {
-                this.loadSDFile(this.selectedFile);
-            }
-        });
-
-        // Run file button
-        document.getElementById('btn-run-file').addEventListener('click', () => {
-            if (this.selectedFile) {
-                this.runSDFile(this.selectedFile);
-            }
-        });
-
-        // Override file upload - disable for FluidNC
-        const uploadZone = document.getElementById('upload-zone');
-        const fileInput = document.getElementById('file-input');
-        if (uploadZone) uploadZone.style.display = 'none';
-        if (fileInput) fileInput.style.display = 'none';
-        
-        // Pause/Resume button
-        const pauseResumeBtn = document.getElementById('btn-pause-resume');
-        if (pauseResumeBtn) {
-            pauseResumeBtn.addEventListener('click', () => {
-                this.togglePauseResume();
-            });
-        }
+        const on = (id, handler) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('click', handler);
+        };
+        on('btn-load-file', () => { if (this.selectedFile) this.loadSDFile(this.selectedFile); });
+        on('btn-run-file', () => { if (this.selectedFile) this.runSDFile(this.selectedFile); });
+        on('btn-sd-refresh', () => this.loadSDFiles(this.currentPath));
+        on('btn-pause-resume', () => this.togglePauseResume());
+        on('btn-follow-running', () => this.showRunningFile());
     }
-    
+
     /**
      * Setup status monitoring from FluidNC stream messages
      */
@@ -68,193 +51,99 @@ class FluidNCController extends Controller {
             this.handleStatusUpdate(content);
         });
     }
-    
+
     /**
-     * Handle status updates from FluidNC
-     * Format: <Run|MPos:X,Y,Z|FS:feed,speed|SD:percent,filename>
+     * Status reports from FluidNC:
+     * <Run|MPos:X,Y,Z|FS:feed,speed|WCO:X,Y,Z|SD:percent,/sd/file.nc>
+     * They give the state, the position and, while a file runs from the SD card, how far
+     * through it the machine is (by bytes read).
      */
     handleStatusUpdate(content) {
         if (typeof content !== 'string') return;
-        
-        const statusPanel = document.getElementById('status-panel');
-        const isStatusPanelVisible = statusPanel && statusPanel.style.display === 'block';
-        
-        // Extract machine state
-        const stateMatch = content.match(/<([^|>]+)/);
-        if (stateMatch) {
-            const state = stateMatch[1];
-            this.machineState = state;
-            const statusMachineState = document.getElementById('status-machine-state');
-            if (statusMachineState) {
-                statusMachineState.textContent = state;
-            }
-            
-            const wasRunning = this.isRunning;
-            this.isRunning = (state === 'Run');
-            
-            // Only hide panel when machine returns to Idle state after running
-            if (wasRunning && state === 'Idle' && isStatusPanelVisible) {
-                console.log('Machine returned to Idle, hiding status panel');
-                this.runningFilePath = null; // Clear running file
-                this.hideStatusPanel();
+        const report = content.match(/<([^>]*)>/);
+        if (!report) return;
+        const fields = report[1].split('|');
+        const state = fields[0].split(':')[0];
+        this.machineState = state;
+
+        // Work position: WPos, or MPos less the last work offset (WCO, sent now and then)
+        const values = (name) => {
+            const field = fields.find(f => f.startsWith(name + ':'));
+            if (!field) return null;
+            const v = field.slice(name.length + 1).split(',').map(Number);
+            return v.length >= 3 && v.every(isFinite) ? v : null;
+        };
+        const wco = values('WCO');
+        if (wco) this.workOffset = wco;
+        const wpos = values('WPos');
+        const mpos = values('MPos');
+        const pos = wpos || (mpos && this.workOffset ? mpos.map((v, i) => v - this.workOffset[i]) : null);
+
+        let sdPercent = null, sdPath = null;
+        const sd = fields.find(f => f.startsWith('SD:'));
+        if (sd) {
+            const m = sd.match(/^SD:([\d.]+),(.+)$/);
+            if (m) {
+                sdPercent = parseFloat(m[1]);
+                sdPath = this.normalizeSDPath(m[2].trim());
             }
         }
-        
-        // Extract SD card progress - only if it matches the running file
-        if (content.includes('SD:')) {
-            const sdMatch = content.match(/SD:([\d.]+),(.+)>/);
-            if (sdMatch) {
-                const percent = parseFloat(sdMatch[1]);
-                const filename = sdMatch[2].trim();
-                
-                // FluidNC prefixes with /sd/ when reporting, normalize both paths for comparison
-                const normalizedReported = filename.replace(/^\/sd/, '');
-                const normalizedExpected = this.runningFilePath ? this.runningFilePath.replace(/^\/sd/, '') : null;
-                
-                // Only update if this matches our running file (ignore M6 macro files)
-                if (normalizedExpected && normalizedReported === normalizedExpected) {
-                    const statusProgress = document.getElementById('status-progress');
-                    if (statusProgress) {
-                        statusProgress.textContent = `${percent.toFixed(2)}%`;
-                    }
-                }
+
+        const active = state === 'Run' || state === 'Hold' || state === 'Door';
+        if (sdPath && active) {
+            const loaded = this.currentFilePath ? this.normalizeSDPath(this.currentFilePath) : null;
+            if (!this.following && loaded === sdPath && this.gcodeText) {
+                // A job on the loaded file, started here or from elsewhere: follow it
+                this.startFollowing(this.currentFilePath, sdPercent);
             }
+            if (this.following && this.normalizeSDPath(this.runningFilePath) === sdPath) {
+                // M6 and other macro files report their own name: only the job's counts
+                this.onRunProgress(sdPercent);
+            }
+            this.setRunningBanner(this.following ? null : sdPath);
+        } else if (!active && state !== 'Home') {
+            this.setRunningBanner(null);
+        }
+
+        if (this.following) {
+            this.isRunning = state === 'Run';
+            if (pos) {
+                this.machinePosition = { x: pos[0], y: pos[1], z: pos[2] };
+                this.updateCoordinateDisplay(pos[0], pos[1], pos[2]);
+            }
+            this.updatePauseButton();
+            // Finished, stopped or alarmed
+            if (state === 'Idle' || state === 'Alarm') this.stopFollowing();
         }
     }
-    
+
+    normalizeSDPath(path) {
+        return (path || '').replace(/^\/sd(?=\/)/, '');
+    }
+
     /**
-     * Toggle pause/resume
+     * Feed hold (!) while running, cycle start (~) while held
      */
-    async togglePauseResume() {
+    togglePauseResume() {
+        const held = (this.machineState || '').startsWith('Hold') || this.machineState === 'Door';
+        this.fluidAPI.sendCommandNoWait(held ? '~' : '!');
+    }
+
+    updatePauseButton() {
         const btn = document.getElementById('btn-pause-resume');
-        
-        if (btn.textContent === 'Pause') {
-            // Send pause command (!)
-            await this.fluidAPI.sendCommandNoWait('!');
-            btn.textContent = 'Resume';
-        } else {
-            // Send resume command (~)
-            await this.fluidAPI.sendCommandNoWait('~');
-            btn.textContent = 'Pause';
-        }
-    }
-    
-    /**
-     * Show status panel and hide SD files/statistics
-     */
-    showStatusPanel() {
-        console.log('[STATUS PANEL] showStatusPanel called');
-        const statusPanel = document.getElementById('status-panel');
-        const sdFilesPanel = document.getElementById('sd-files-panel');
-        const statsPanel = document.getElementById('statistics-panel');
-        
-        console.log('showStatusPanel - elements found:', {
-            statusPanel: !!statusPanel,
-            sdFilesPanel: !!sdFilesPanel,
-            statsPanel: !!statsPanel
-        });
-        
-        console.log('BEFORE style changes:', {
-            statusDisplay: statusPanel?.style.display,
-            sdFilesDisplay: sdFilesPanel?.style.display,
-            statsDisplay: statsPanel?.style.display
-        });
-        
-        if (statusPanel) statusPanel.style.display = 'block';
-        if (sdFilesPanel) sdFilesPanel.style.display = 'none';
-        if (statsPanel) statsPanel.style.display = 'none';
-        
-        // Switch to display tab on mobile to show the animation
-        const isMobile = window.innerWidth <= 768;
-        if (isMobile) {
-            this.switchMobileTab('display');
-        }
-        
-        console.log('AFTER style changes:', {
-            statusDisplay: statusPanel?.style.display,
-            sdFilesDisplay: sdFilesPanel?.style.display,
-            statsDisplay: statsPanel?.style.display
-        });
-        
-        // Start elapsed time tracking
-        this.runStartTime = Date.now();
-        this.statusUpdateInterval = setInterval(() => {
-            this.updateElapsedTime();
-        }, 1000);
-    }
-    
-    /**
-     * Hide status panel and show SD files/statistics
-     */
-    hideStatusPanel() {
-        console.log('[STATUS PANEL] hideStatusPanel called');
-        console.trace(); // Show call stack
-        
-        const statusPanel = document.getElementById('status-panel');
-        const sdFilesPanel = document.getElementById('sd-files-panel');
-        const statsPanel = document.getElementById('statistics-panel');
-        
-        if (statusPanel) statusPanel.style.display = 'none';
-        if (sdFilesPanel) sdFilesPanel.style.display = 'block';
-        if (statsPanel) statsPanel.style.display = 'block';
-        
-        // Stop elapsed time tracking
-        if (this.statusUpdateInterval) {
-            clearInterval(this.statusUpdateInterval);
-            this.statusUpdateInterval = null;
-        }
-        
-        // Reset pause button
-        const pauseBtn = document.getElementById('btn-pause-resume');
-        if (pauseBtn) pauseBtn.textContent = 'Pause';
-        
-        // Clear viewer state when job completes
-        this.clearViewerState();
-    }
-    
-    /**
-     * Update elapsed and remaining time
-     */
-    updateElapsedTime() {
-        if (!this.runStartTime) return;
-        
-        const elapsed = Math.floor((Date.now() - this.runStartTime) / 1000);
-        const elapsedStr = this.formatTime(elapsed);
-        document.getElementById('status-elapsed-time').textContent = elapsedStr;
-        
-        // Calculate remaining time based on progress
-        const progressEl = document.getElementById('status-progress');
-        const progressText = progressEl.textContent;
-        const percentMatch = progressText.match(/([\d.]+)%/);
-        
-        if (percentMatch) {
-            const percent = parseFloat(percentMatch[1]);
-            if (percent > 0 && percent < 100) {
-                const totalEstimated = (elapsed / percent) * 100;
-                const remaining = Math.floor(totalEstimated - elapsed);
-                document.getElementById('status-remaining-time').textContent = this.formatTime(remaining);
-            }
-        }
-    }
-    
-    /**
-     * Format seconds to HH:MM:SS
-     */
-    formatTime(seconds) {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = seconds % 60;
-        
-        if (h > 0) {
-            return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-        }
-        return `${m}:${s.toString().padStart(2, '0')}`;
+        if (!btn) return;
+        const held = this.machineState === 'Hold' || this.machineState === 'Door';
+        btn.classList.toggle('vw-held', held);
+        const label = btn.querySelector('span');
+        if (label) label.textContent = held ? 'Resume (cycle start)' : 'Pause (feed hold)';
     }
 
     /**
      * Sync grid dimensions from FluidNC settings (runs automatically on load)
      */
     async syncGridFromFluidNC() {
+        // Opened on its own, not inside the WebUI: there's no machine to ask
+        if (this.fluidAPI.isInIframe === false) return;
         try {
             const [width, height, motionParams] = await Promise.all([
                 this.fluidAPI.getMaxTravelX(),
@@ -264,20 +153,26 @@ class FluidNCController extends Controller {
 
             const widthInput = document.getElementById('grid-width');
             const heightInput = document.getElementById('grid-height');
-            
+
             widthInput.value = Math.round(width);
             heightInput.value = Math.round(height);
             this.gridFromMachine = true; // the real bed: not sized from the stock
-            
+            this.updateGridSize();
+
             // Trigger input events so the renderers pick up the change
             widthInput.dispatchEvent(new Event('input', { bubbles: true }));
             heightInput.dispatchEvent(new Event('input', { bubbles: true }));
 
             // Apply motion parameters to animator
             this.animator.setMotionParameters(motionParams);
+            if (this.segments.length > 0) {
+                // Times depend on them: estimate the loaded file again
+                this.animator.setSegments(this.segments);
+                this.updateStatistics();
+                this.updateToolPanel();
+            }
 
             console.log('Grid dimensions synced from FluidNC:', width, 'x', height);
-            console.log('Motion parameters synced from FluidNC:', motionParams);
         } catch (error) {
             console.error('Failed to sync grid dimensions:', error);
         }
@@ -289,7 +184,7 @@ class FluidNCController extends Controller {
     async loadSDFiles(path = '/') {
         this.currentPath = path;
         const browser = document.getElementById('file-browser');
-        browser.innerHTML = '<div style="padding: 20px; text-align: center; opacity: 0.7;">Loading files...</div>';
+        browser.innerHTML = '<div class="vw-empty-note">Loading files…</div>';
 
         try {
             const files = await this.fluidAPI.listSDFiles(path);
@@ -297,7 +192,7 @@ class FluidNCController extends Controller {
             this.updateBreadcrumb(path);
         } catch (error) {
             console.error('Failed to load SD files:', error);
-            browser.innerHTML = '<div style="padding: 20px; text-align: center; color: #f44336;">Failed to load files</div>';
+            browser.innerHTML = '<div class="vw-empty-note">Couldn\'t read the SD card</div>';
         }
     }
 
@@ -308,7 +203,7 @@ class FluidNCController extends Controller {
         const browser = document.getElementById('file-browser');
 
         if (files.length === 0) {
-            browser.innerHTML = '<div style="padding: 20px; text-align: center; opacity: 0.7;">No files found</div>';
+            browser.innerHTML = '<div class="vw-empty-note">No G-code files here</div>';
             return;
         }
 
@@ -317,16 +212,18 @@ class FluidNCController extends Controller {
         // Sort: directories first, then files
         files.sort((a, b) => {
             if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-            return a.name.localeCompare(b.name);
+            return a.name.localeCompare(b.name, undefined, { numeric: true });
         });
 
         files.forEach(file => {
             const item = document.createElement('div');
-            item.className = 'file-item';
+            item.className = 'file-item' + (file.type === 'dir' ? ' vw-dir' : '');
+            item.setAttribute('role', 'button');
+            item.tabIndex = 0;
 
             const icon = document.createElement('div');
             icon.className = 'file-icon';
-            icon.textContent = file.type === 'dir' ? '📁' : '📄';
+            icon.textContent = file.type === 'dir' ? '▸' : 'NC';
 
             const info = document.createElement('div');
             info.className = 'file-info';
@@ -334,24 +231,27 @@ class FluidNCController extends Controller {
             const name = document.createElement('div');
             name.className = 'file-name';
             name.textContent = file.name;
-
             info.appendChild(name);
 
-            if (file.type === 'file') {
-                const size = document.createElement('div');
-                size.className = 'file-size';
-                size.textContent = this.formatFileSize(file.size);
-                info.appendChild(size);
-            }
+            const size = document.createElement('div');
+            size.className = 'file-size';
+            size.textContent = file.type === 'dir' ? 'folder' : this.formatFileSize(file.size);
+            info.appendChild(size);
 
             item.appendChild(icon);
             item.appendChild(info);
+            if (this.selectedFile && this.selectedFile.path === file.path) item.classList.add('selected');
 
-            item.addEventListener('click', () => {
-                if (file.type === 'dir') {
-                    this.loadSDFiles(file.path);
-                } else {
-                    this.selectFile(file, item);
+            const open = () => {
+                if (file.type === 'dir') this.loadSDFiles(file.path);
+                else this.selectFile(file, item);
+            };
+            item.addEventListener('click', open);
+            item.addEventListener('dblclick', () => { if (file.type !== 'dir') this.loadSDFile(file); });
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    open();
                 }
             });
 
@@ -380,14 +280,16 @@ class FluidNCController extends Controller {
 
             const item = document.createElement('span');
             item.className = 'breadcrumb-item';
-            item.textContent = part || 'SD Card';
+            item.textContent = part || 'SD card';
             currentPath += (part ? '/' + part : '');
             const targetPath = currentPath || '/';
             item.setAttribute('data-path', targetPath);
 
-            item.addEventListener('click', () => {
-                this.loadSDFiles(targetPath);
-            });
+            if (index < parts.length - 1) {
+                item.setAttribute('role', 'button');
+                item.tabIndex = 0;
+                item.addEventListener('click', () => this.loadSDFiles(targetPath));
+            }
 
             breadcrumb.appendChild(item);
         });
@@ -397,16 +299,18 @@ class FluidNCController extends Controller {
      * Select a file
      */
     selectFile(file, element) {
-        // Remove previous selection
-        document.querySelectorAll('.file-item').forEach(item => {
-            item.classList.remove('selected');
-        });
-
+        document.querySelectorAll('.file-item').forEach(item => item.classList.remove('selected'));
         element.classList.add('selected');
         this.selectedFile = file;
 
-        document.getElementById('btn-load-file').disabled = false;
-        document.getElementById('btn-run-file').disabled = false;
+        const name = document.getElementById('sd-selected-name');
+        const meta = document.getElementById('sd-selected-meta');
+        if (name) name.textContent = file.name;
+        if (meta) meta.textContent = this.formatFileSize(file.size);
+        for (const id of ['btn-load-file', 'btn-run-file', 'btn-open-host']) {
+            const button = document.getElementById(id);
+            if (button) button.disabled = false;
+        }
     }
 
     /**
@@ -424,18 +328,19 @@ class FluidNCController extends Controller {
             const content = await this.fluidAPI.readSDFile(file.path, (percent) => {
                 progressFill.style.width = percent + '%';
             });
-            
+
             // Switch to parsing progress
             progressFill.style.width = '0%';
 
             // Process the GCode content using existing loadFile logic
             this.loadingFilePath = file.path; // folder for earlier jobs (readPriorJob)
             await this.processGCode(content, file.name);
-            
+
             // Store current file path, cache file, and clear any previous execution state
             this.currentFilePath = file.path;
             await this.cacheFile(this.currentFilePath, content); // Cache for potential state restoration
             this.clearViewerState(); // Clear execution state from previous file
+            this.saveViewerState();
 
             progressFill.style.width = '100%';
             setTimeout(() => {
@@ -535,306 +440,284 @@ class FluidNCController extends Controller {
      * Process GCode content (reusing existing logic)
      */
     async processGCode(text, filename) {
-        // This reuses the existing file processing logic from Controller
-        const progressBar = document.getElementById('progress-bar');
         const progressFill = document.getElementById('progress-fill');
 
-        try {
-            // Create a Blob from the text to use parseFile
-            const blob = new Blob([text], { type: 'text/plain' });
-            const file = new File([blob], filename, { type: 'text/plain' });
+        // Parametric files: read the machine values they refer to from the controller
+        this.parser.machineValues = typeof isParametricGCode === 'function' && isParametricGCode(text)
+            ? await this.readMachineValues(text)
+            : null;
 
-            // Parametric files: read the machine values they refer to from the controller
-            this.parser.machineValues = typeof isParametricGCode === 'function' && isParametricGCode(text)
-                ? await this.readMachineValues(text)
-                : null;
+        const segments = await this.parser.parseString(text, (percent) => {
+            progressFill.style.width = percent + '%';
+        });
+        const bounds = this.parser.getBounds();
 
-            // Parse GCode using the parser's parseFile method
-            const segments = await this.parser.parseFile(file, (percent) => {
-                progressFill.style.width = percent + '%';
-            });
+        this.segments = segments;
+        this.bounds = bounds;
+        this.gcodeText = text;
+        this.segmentBytePositions = null; // Recalculated lazily for the new file
 
-            const bounds = this.parser.getBounds();
+        // Detect tools used in the file
+        this.detectTools(segments);
 
-            this.segments = segments;
-            this.bounds = bounds;
-            this.gcodeText = text;
-            this.segmentBytePositions = null; // Recalculated lazily for the new file
-            this.hasRefittedCamera = false; // Reset flag for new file
+        // Update renderers
+        this.renderer2d.setSegments(segments, bounds);
+        this.renderer3d.setSegments(segments, bounds);
 
-            // Detect tools used in the file
-            this.detectTools(segments);
-            
-            // Calculate segment execution times for predictive animation
-            this.calculateSegmentExecutionTimes();
+        // Update renderers with tool states (colors and visibility)
+        this.updateRenderers();
 
-            // Update renderers
-            this.renderer2d.setSegments(segments, bounds);
-            this.renderer3d.setSegments(segments, bounds);
+        // Update animator. Its timeline (feeds, rapid rates and acceleration) also
+        // predicts where a running job is between progress reports
+        this.animator.setSegments(segments);
+        this.calculateSegmentExecutionTimes();
 
-            // Update renderers with tool states (colors and visibility)
-            this.updateRenderers();
+        this.updateStatistics();
+        this.displayGCode(text);
+        this.updateToolPanel();
+        this.setupStockSimulation();
+        this.setupSimEvents();
+        this.initializeLayerSliders();
+        document.getElementById('animation-panel').style.display = 'block';
+        document.getElementById('tool-panel').style.display = 'block';
+        document.getElementById('btn-reset-view').disabled = false;
+        const welcomePanel = document.getElementById('gcode-welcome');
+        if (welcomePanel) welcomePanel.style.display = 'none';
 
-            // Update animator
-            this.animator.setSegments(segments);
-
-            // Update UI first to ensure canvas is visible
-            this.updateStatistics();
-            this.displayGCode(text);
-            this.updateToolPanel();
-            this.setupStockSimulation();
-            this.setupSimEvents();
-            document.getElementById('animation-panel').style.display = 'block';
-            const gcodePanel = document.getElementById('gcode-panel');
-            gcodePanel.style.display = 'block';
-            gcodePanel.style.visibility = 'visible';
-            gcodePanel.style.position = 'relative';
-            document.getElementById('tool-panel').style.display = 'block';
-            const rapidMovesPanel = document.getElementById('rapid-moves-panel');
-            if (rapidMovesPanel) rapidMovesPanel.style.display = 'block';
-            document.getElementById('btn-reset-view').disabled = false;
-            
-            // Hide welcome panel
-            const welcomePanel = document.getElementById('gcode-welcome');
-            if (welcomePanel) welcomePanel.style.display = 'none';
-            
-            // Setup line slider
-            const lineSlider = document.getElementById('line-slider');
-            lineSlider.max = segments.length;
-            lineSlider.value = 0;
-
-            // Fit camera to bounds - use requestAnimationFrame to wait for layout
-            const fitCamera = () => {
-                // Force canvas resize first
-                this.renderer2d.resizeCanvas();
-                
-                // Try to get dimensions from multiple sources
-                let width = this.canvas2d.width;
-                let height = this.canvas2d.height;
-                
-                // If canvas dimensions are 0, try the container or use viewport
-                if (!width || !height) {
-                    const container = this.canvas2d.parentElement;
-                    if (container) {
-                        const rect = container.getBoundingClientRect();
-                        width = rect.width;
-                        height = rect.height;
-                    }
-                    
-                    // Still no dimensions? Use a reasonable portion of viewport
-                    if (!width || !height) {
-                        width = window.innerWidth * 0.6;  // Assume canvas takes ~60% of width
-                        height = window.innerHeight * 0.8; // Assume canvas takes ~80% of height
-                    }
-                    
-                    // Set canvas to calculated dimensions
-                    if (width && height) {
-                        this.canvas2d.width = width;
-                        this.canvas2d.height = height;
-                    }
-                }
-                
-                console.log('FluidNC: Fitting to bounds with canvas size:', width, 'x', height);
-                this.camera.fitToBounds(this.viewBounds(), 0.1, width, height);
-                this.updateZoomSlider();
-            };
-            
-            // Use requestAnimationFrame to wait for layout, then set timeouts as backup
-            requestAnimationFrame(() => {
-                fitCamera();
-                setTimeout(fitCamera, 200); // Retry after 200ms
-                setTimeout(fitCamera, 500); // Final retry after 500ms for slower devices
-            });
-
-        } catch (error) {
-            console.error('Error processing GCode:', error);
-            throw error;
-        }
+        const lineSlider = document.getElementById('line-slider');
+        lineSlider.max = segments.length;
+        lineSlider.value = 0;
+        document.getElementById('total-lines').textContent = segments.length;
+        this.onFileLoaded(filename);
     }
 
     /**
      * Run file on CNC
      */
     async runSDFile(file) {
-        console.log('runSDFile called with file:', file);
-        
-        if (!confirm(`Run ${file.name} on the CNC?\n\nThis will start the job immediately.`)) {
-            console.log('User canceled run confirmation');
-            return;
-        }
+        if (!confirm(`Run ${file.name} on the CNC?\n\nThis will start the job immediately.`)) return;
 
-        console.log('User confirmed, starting run...');
-        
-        // Track which file is running
-        this.runningFilePath = file.path;
-        
         const btn = document.getElementById('btn-run-file');
         btn.disabled = true;
-        btn.textContent = 'Running...';
 
         try {
-            // Calculate total file size in bytes for progress tracking
-            const fileContent = this.gcodeText || '';
-            const totalBytes = new Blob([fileContent]).size;
-            
-            // Setup time-based predictive animation
-            this.predictiveAnimationId = null;
-            let executionStartTime = Date.now();
-            let timeOffset = 0;
-            
-            const predictiveAnimate = () => {
-                // Calculate elapsed time since execution started
-                const now = Date.now();
-                const elapsedSeconds = (now - executionStartTime) / 1000 + timeOffset;
-                
-                // Predict current segment based on elapsed time
-                const predictedIndex = this.findSegmentByElapsedTime(elapsedSeconds);
-                
-                // Smooth interpolation towards predicted position
-                const currentIndex = this.animator.currentIndex;
-                const diff = predictedIndex - currentIndex;
-                
-                // Move smoothly (15% per frame), but never backward
-                const step = Math.abs(diff) > 0.01 ? diff * 0.15 : diff;
-                const newIndex = Math.max(currentIndex, currentIndex + step); // Never go backward
-                
-                this.animator.currentIndex = Math.floor(newIndex);
-                this.animator.segmentProgress = newIndex % 1;
-                
-                // Update UI and renderers
-                if (this.animator.onUpdate) {
-                    this.animator.onUpdate(this.animator.currentIndex, this.animator.segmentProgress);
-                }
-                
-                // Continue animating
-                this.predictiveAnimationId = requestAnimationFrame(predictiveAnimate);
-            };
-            
-            // Reset animator position to start
-            this.animator.currentIndex = 0;
-            this.animator.segmentProgress = 0;
-            
-            // Set renderers to show no segments initially
-            this.renderer2d.setMaxSegmentIndex(0, 0);
-            this.renderer3d.setMaxSegmentIndex(0, 0);
-            
-            // Keep animator paused - we'll manually update position
-            this.animator.pause();
-            
-            console.log('About to show status panel...');
-            // Show status panel and initialize fields
-            this.showStatusPanel();
-            console.log('Status panel shown');
-            
-            // Force camera refit and canvas update after tab switch
-            // Use setTimeout to ensure DOM has updated
-            setTimeout(() => {
-                const canvas = this.currentView === '2d' ? this.canvas2d : this.canvas3d;
-                const width = canvas.clientWidth || canvas.width;
-                const height = canvas.clientHeight || canvas.height;
-                console.log('Refitting camera with canvas size:', width, 'x', height);
-                this.camera.fitToBounds(this.viewBounds(), 0.1, width, height);
-            }, 100);
-            
-            // Set total time estimate
-            if (this.animator.estimatedTotalTime) {
-                document.getElementById('status-total-time').textContent = 
-                    this.formatTime(Math.floor(this.animator.estimatedTotalTime));
+            // Preview what will run, so the job can be followed
+            if (this.normalizeSDPath(this.currentFilePath) !== this.normalizeSDPath(file.path)) {
+                await this.loadSDFile(file);
             }
-            
-            // Set initial tool
-            this.lastStatusTool = -1;
-            if (this.segments && this.segments[0]) {
-                const initialTool = this.segments[0].tool || 0;
-                this.lastStatusTool = initialTool;
-                document.getElementById('status-current-tool').textContent = `T${initialTool}`;
-            }
-            
-            // Start predictive animation
-            predictiveAnimate();
-            
-            // Monitor progress from FluidNC
-            let lastUpdateTime = 0;
-            let lastStateSaveTime = 0;
-            const updateInterval = 500;
-            const stateSaveInterval = 5000; // Save state every 5 seconds
-            
-            await this.fluidAPI.runSDFile(file.path, async (percent) => {
-                const now = Date.now();
-                if (now - lastUpdateTime < updateInterval) {
-                    return;
-                }
-                lastUpdateTime = now;
-                
-                // Calculate actual segment position from byte position.
-                // FluidNC reports progress through the parametric source, which loops make
-                // non-monotonic, so expanded files rely on the time-based prediction alone.
-                const bytePosition = Math.floor((percent / 100) * totalBytes);
-                const actualIndex = this.gcodeExpansion ? -1 : this.findSegmentByBytePosition(bytePosition);
-                
-                // Periodically save state during execution
-                if (now - lastStateSaveTime > stateSaveInterval) {
-                    lastStateSaveTime = now;
-                    // Save state without blocking (fire and forget)
-                    this.saveViewerState().catch(err => console.error('Failed to save state:', err));
-                }
-                
-                if (actualIndex >= 0) {
-                    // IMPORTANT: Adjust timeOffset to align prediction with reality
-                    // Don't directly set animator position - let prediction handle it
-                    const actualTime = this.segmentExecutionTimes[actualIndex] || 0;
-                    const elapsedSeconds = (now - executionStartTime) / 1000;
-                    const newTimeOffset = actualTime - elapsedSeconds;
-                    
-                    timeOffset = newTimeOffset;
-                    
-                    // Update current tool display if changed
-                    if (this.segments[actualIndex]) {
-                        const currentTool = this.segments[actualIndex].tool || 0;
-                        if (this.lastStatusTool !== currentTool) {
-                            this.lastStatusTool = currentTool;
-                            document.getElementById('status-current-tool').textContent = `T${currentTool}`;
-                        }
-                    }
-                }
-            });
-            
-            btn.textContent = '✓ Started';
-            setTimeout(() => {
-                btn.textContent = 'Run';
-                btn.disabled = false;
-            }, 3000);
-            
-            // Note: Status panel will be hidden automatically when machine state changes to non-running
-            // via handleStatusUpdate() monitoring the stream messages
+            this.fluidAPI.runSDFile(file.path);
+            this.startFollowing(file.path, 0);
+            this.switchMobileTab('view');
         } catch (error) {
             console.error('Failed to run SD file:', error);
             alert('Failed to run file: ' + error.message);
-            btn.textContent = '✗ Failed';
-            setTimeout(() => {
-                btn.textContent = 'Run';
-                btn.disabled = false;
-            }, 3000);
-            // Hide status panel on error
-            this.hideStatusPanel();
+            this.stopFollowing();
+        } finally {
+            btn.disabled = false;
         }
     }
-    
+
+    /**
+     * Follow a job on the machine: the animation shows where it is, predicted from the
+     * timeline between progress reports (SD percent, by bytes read) and corrected by them.
+     * Time only advances while the machine moves (not in a hold or at an M0).
+     * @param {string} filePath - the running file
+     * @param {number} percent - how far it is now (0 when it was just started)
+     */
+    startFollowing(filePath, percent = 0) {
+        if (this.following) this.stopFollowing();
+        this.following = true;
+        this.runningFilePath = filePath;
+        this.runPredicted = 0; // seconds into the job on the timeline
+        this.runStarted = Date.now();
+        this.runPercent = percent || 0;
+        if (percent > 0) {
+            const index = this.gcodeExpansion ? -1 : this.findSegmentByBytePosition(percent / 100 * this.fileByteLength());
+            if (index >= 0) this.runPredicted = this.segmentExecutionTimes[Math.max(0, index - 1)] || 0;
+            // Started before we saw it: count elapsed time from where it is
+            this.runStarted = Date.now() - this.runPredicted * 1000;
+        }
+
+        this.animator.pause();
+        this.animator.currentIndex = 0;
+        this.animator.segmentProgress = 0;
+        this.renderer2d.setMaxSegmentIndex(0, 0);
+        this.renderer3d.setMaxSegmentIndex(0, 0);
+        this.showRunUI();
+
+        let last = performance.now();
+        let shown = 0;
+        const animate = (now) => {
+            if (!this.following) return;
+            const dt = Math.min(0.5, (now - last) / 1000);
+            last = now;
+            if (this.machineState === 'Run') this.runPredicted += dt;
+
+            const predicted = this.findSegmentByElapsedTime(this.runPredicted);
+            // Ease toward the prediction, never backward
+            const target = Math.max(shown, predicted);
+            shown = target - shown > 0.01 ? shown + (target - shown) * 0.15 : target;
+            const index = Math.floor(shown);
+            this.animator.currentIndex = index;
+            this.animator.segmentProgress = shown % 1;
+            if (this.animator.onUpdate) this.animator.onUpdate(index, shown % 1);
+            this.updateRunUI(index);
+            this.runAnimationId = requestAnimationFrame(animate);
+        };
+        this.runAnimationId = requestAnimationFrame(animate);
+        this.runStateSaved = Date.now();
+    }
+
+    /**
+     * A progress report: line the prediction up with where the machine really is.
+     * FluidNC reports progress through the file as read, which for a parametric file is
+     * the source (loops make it non-monotonic), so those rely on the prediction alone.
+     */
+    onRunProgress(percent) {
+        if (!this.following || percent === null) return;
+        this.runPercent = percent;
+        if (!this.gcodeExpansion) {
+            const index = this.findSegmentByBytePosition(percent / 100 * this.fileByteLength());
+            if (index >= 0) {
+                // The planner reads ahead of the moves, so the read position is a little ahead
+                const actual = this.segmentExecutionTimes[Math.max(0, index - 1)] || 0;
+                if (Math.abs(actual - this.runPredicted) > 2) this.runPredicted = actual;
+            }
+        }
+        if (Date.now() - this.runStateSaved > 5000) {
+            this.runStateSaved = Date.now();
+            this.saveViewerState();
+        }
+    }
+
+    stopFollowing() {
+        if (!this.following) return;
+        this.following = false;
+        this.isRunning = false;
+        this.machinePosition = null;
+        if (this.runAnimationId) cancelAnimationFrame(this.runAnimationId);
+        this.runAnimationId = null;
+        this.runningFilePath = null;
+        this.hideRunUI();
+    }
+
+    fileByteLength() {
+        if (this.fileBytes === undefined || this.fileBytesText !== this.gcodeText) {
+            this.fileBytesText = this.gcodeText;
+            this.fileBytes = new TextEncoder().encode(this.gcodeText || '').length;
+        }
+        return this.fileBytes;
+    }
+
+    /**
+     * The running job's strip and progress bar replace the transport bar
+     */
+    showRunUI() {
+        if (this.ui) this.ui.classList.add('is-running');
+        for (const id of ['run-strip', 'run-bar']) {
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('hidden');
+        }
+        ViewerUI.closePopover();
+        this.updatePauseButton();
+    }
+
+    hideRunUI() {
+        if (this.ui) this.ui.classList.remove('is-running');
+        for (const id of ['run-strip', 'run-bar']) {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        }
+        // The whole job again, as after loading
+        if (this.segments.length > 0) this.animator.setCurrentLine(this.segments.length);
+        this.clearViewerState();
+    }
+
+    /**
+     * Running job: tool, last message, line, progress, elapsed and remaining time, and the
+     * time to the next M0 (the machine waits there until it's resumed)
+     */
+    updateRunUI(index) {
+        const n = this.segments.length;
+        if (n === 0) return;
+        const seg = this.segments[Math.min(index, n - 1)];
+        const state = this.tools.get(seg.tool || 1);
+        const toolEl = document.getElementById('run-tool');
+        if (toolEl) {
+            const name = state ? this.shortToolName(state.name, seg.tool || 1) : '';
+            const held = this.machineState === 'Hold' || this.machineState === 'Door';
+            toolEl.textContent = (held ? 'On hold · ' : '') + `T${seg.tool || 1}${name ? ' ' + name : ''}`;
+        }
+        const sub = document.getElementById('run-sub');
+        if (sub) {
+            let message = '';
+            for (const e of this.simEvents || []) {
+                if (e.index > index) break;
+                if (e.kind === 'msg' || e.kind === 'print') message = e.text;
+            }
+            // Line numbers as the G-code pane shows them (expanded or source)
+            const line = this.toDisplayLine(seg.lineNum);
+            const lines = this.gcodeLines ? this.gcodeLines.length : 0;
+            sub.textContent = [message, line ? `line ${line} of ${lines}` : ''].filter(Boolean).join(' · ');
+        }
+
+        const total = this.animator.totalAnimTime || 0;
+        const fraction = total > 0 ? Math.min(1, this.runPredicted / total) : index / n;
+        // The machine's own report when there is one (bytes read), else the prediction
+        const percent = this.runPercent > 0 && !this.gcodeExpansion ? this.runPercent : fraction * 100;
+        const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+        const fill = document.getElementById('run-fill');
+        if (fill) fill.style.width = Math.min(100, percent).toFixed(1) + '%';
+        set('run-percent', Math.floor(percent) + '%');
+        set('run-elapsed', this.formatClock((Date.now() - this.runStarted) / 1000));
+        set('run-left', total > 0 ? `${this.formatClock(Math.max(0, total - this.runPredicted))} left` : '');
+
+        const nextPause = (this.simPauses || []).find(p => p.index > index);
+        let nextText = '';
+        if (nextPause) {
+            const at = this.segmentExecutionTimes[Math.max(0, nextPause.index - 1)] || 0;
+            nextText = ` · next M0 in ${this.formatClock(Math.max(0, at - this.runPredicted))}`;
+        }
+        set('run-next-m0', nextText);
+    }
+
+    /**
+     * The Files pane says when the machine is running another file, with a button to
+     * preview and follow it
+     */
+    setRunningBanner(sdPath) {
+        const banner = document.getElementById('running-banner');
+        if (!banner) return;
+        this.otherRunningPath = sdPath;
+        banner.classList.toggle('hidden', !sdPath);
+        const name = document.getElementById('running-name');
+        if (name && sdPath) name.textContent = sdPath.split('/').pop();
+    }
+
+    async showRunningFile() {
+        const path = this.otherRunningPath;
+        if (!path) return;
+        // Reading a file while a job runs from the card is fine: the job reads its own copy
+        const name = path.split('/').pop();
+        await this.loadSDFile({ path, name, type: 'file' });
+        this.switchMobileTab('view');
+    }
+
     /**
      * Find segment index based on byte position in file
      */
     findSegmentByBytePosition(bytePosition) {
         if (!this.segments || this.segments.length === 0) return -1;
-        
+
         // If we don't have byte positions cached, calculate them
         if (!this.segmentBytePositions) {
             this.calculateSegmentBytePositions();
         }
-        
+
         // Binary search to find the segment
         let left = 0;
         let right = this.segmentBytePositions.length - 1;
-        
+
         while (left <= right) {
             const mid = Math.floor((left + right) / 2);
             if (this.segmentBytePositions[mid] <= bytePosition) {
@@ -843,145 +726,71 @@ class FluidNCController extends Controller {
                 right = mid - 1;
             }
         }
-        
+
         return Math.min(right, this.segments.length - 1);
     }
-    
+
     /**
      * Calculate cumulative byte positions for each segment
      */
     calculateSegmentBytePositions() {
         if (!this.gcodeText || !this.segments) return;
-        
-        console.log('[PERF] calculateSegmentBytePositions - START', new Date().toISOString());
-        const startTime = performance.now();
-        
+
         const lines = this.gcodeText.split('\n');
         this.segmentBytePositions = [];
-        
-        // Use TextEncoder for fast byte length calculation (much faster than Blob)
         const encoder = new TextEncoder();
-        
+
         // Pre-calculate byte length of each line (including newline)
         const lineByteLengths = [];
         let cumulativeBytes = 0;
-        
+
         for (let i = 0; i < lines.length; i++) {
-            // TextEncoder.encode() is 100x faster than new Blob()
             const lineBytes = encoder.encode(lines[i] + '\n').length;
             cumulativeBytes += lineBytes;
             lineByteLengths.push(cumulativeBytes);
         }
-        
+
         // Map segment line numbers to byte positions
         for (let i = 0; i < this.segments.length; i++) {
             const seg = this.segments[i];
             const lineNum = seg.lineNum || 0;
-            
+
             if (lineNum > 0 && lineNum <= lineByteLengths.length) {
                 this.segmentBytePositions.push(lineByteLengths[lineNum - 1]);
             } else {
                 this.segmentBytePositions.push(cumulativeBytes);
             }
         }
-        
-        const endTime = performance.now();
-        const duration = (endTime - startTime).toFixed(2);
-        console.log(`[PERF] calculateSegmentBytePositions - END (took ${duration}ms)`, new Date().toISOString());
-        console.log(`[PERF] Processed ${this.segments.length} segments, ${lines.length} lines`);
     }
 
     /**
-     * Calculate execution time for each segment based on feed rate and distance
+     * When each move ends, in seconds from the start of the job: the animator's timeline,
+     * which allows for acceleration and the machine's rapid rates
      */
     calculateSegmentExecutionTimes() {
-        if (!this.segments || this.segments.length === 0) return;
-        
-        const startTime = performance.now();
-        
-        this.segmentExecutionTimes = [];
-        let cumulativeTime = 0;
-        
-        for (let i = 0; i < this.segments.length; i++) {
-            const seg = this.segments[i];
-            let segmentTime = 0;
-            
-            // Skip segments without start/end properties
-            if (!seg.start || !seg.end) {
-                this.segmentExecutionTimes.push(cumulativeTime);
-                continue;
-            }
-            
-            // Calculate distance - segments use start/end objects
-            const dx = seg.end.x - seg.start.x;
-            const dy = seg.end.y - seg.start.y;
-            const dz = seg.end.z - seg.start.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            // Get feed rate (units per minute)
-            const feedRate = seg.feedRate || 1000; // Default 1000 mm/min if not specified
-            
-            if (seg.type === 'rapid' || seg.type === 'G0') {
-                // Rapid moves - assume fixed rapid rate (most machines ~5000-10000 mm/min)
-                const rapidRate = 6000; // Conservative estimate
-                segmentTime = distance > 0 ? (distance / rapidRate) * 60 : 0; // Convert to seconds
-            } else if (seg.type === 'cut' || seg.type === 'probe' || seg.type === 'G1' || seg.type === 'G2' || seg.type === 'G3') {
-                // Feed moves - use actual feed rate
-                segmentTime = distance > 0 ? (distance / feedRate) * 60 : 0; // Convert to seconds
-            }
-            
-            cumulativeTime += segmentTime;
-            this.segmentExecutionTimes.push(cumulativeTime);
-        }
-        
-        const endTime = performance.now();
-        console.log(`[PERF] Total estimated execution time: ${(cumulativeTime / 60).toFixed(2)} minutes (calculated in ${(endTime - startTime).toFixed(2)}ms)`);
+        this.segmentExecutionTimes = this.animator.segmentEndTimes
+            ? Array.from(this.animator.segmentEndTimes) : [];
     }
 
     /**
      * Find segment index based on elapsed time using predictive estimation
      */
     findSegmentByElapsedTime(elapsedSeconds) {
-        if (!this.segments || this.segments.length === 0) return 0;
-        if (!this.segmentExecutionTimes || this.segmentExecutionTimes.length === 0) {
-            console.warn('segmentExecutionTimes not calculated');
-            return 0;
-        }
-        
-        // Binary search for segment at this time
-        let left = 0;
-        let right = this.segmentExecutionTimes.length - 1;
-        
-        while (left <= right) {
-            const mid = Math.floor((left + right) / 2);
-            if (this.segmentExecutionTimes[mid] <= elapsedSeconds) {
-                left = mid + 1;
-            } else {
-                right = mid - 1;
-            }
-        }
-        
-        return Math.min(Math.max(0, right), this.segments.length - 1);
-    }
+        const times = this.segmentExecutionTimes;
+        if (!this.segments || this.segments.length === 0 || !times || times.length === 0) return 0;
 
-    /**
-     * Override switchMobileTab to refit camera when switching to display
-     */
-    switchMobileTab(tabName) {
-        super.switchMobileTab(tabName);
-        
-        // When switching to display tab for the first time with a loaded file, refit camera
-        if (tabName === 'display' && this.bounds && !this.hasRefittedCamera) {
-            this.hasRefittedCamera = true;
-            setTimeout(() => {
-                this.renderer2d.resizeCanvas();
-                const width = this.canvas2d.width || this.canvas2d.clientWidth;
-                const height = this.canvas2d.height || this.canvas2d.clientHeight;
-                console.log('FluidNC: Refitting on tab switch with canvas size:', width, 'x', height);
-                this.camera.fitToBounds(this.viewBounds(), 0.1, width, height);
-                this.updateZoomSlider();
-            }, 100);
+        // The first move that ends after this time
+        let left = 0;
+        let right = times.length - 1;
+        while (left < right) {
+            const mid = Math.floor((left + right) / 2);
+            if (times[mid] <= elapsedSeconds) left = mid + 1;
+            else right = mid;
         }
+        const start = left > 0 ? times[left - 1] : 0;
+        const span = times[left] - start;
+        const within = span > 0 ? Math.min(1, Math.max(0, (elapsedSeconds - start) / span)) : 1;
+        return Math.min(this.segments.length, left + within);
     }
 
     /**
@@ -989,57 +798,29 @@ class FluidNCController extends Controller {
      */
     setupAnimator() {
         super.setupAnimator();
-        
+
         // Save original onUpdate callback
         const originalOnUpdate = this.animator.onUpdate;
         let lastSaveIndex = 0;
-        
+
         // Wrap onUpdate to save state periodically (every 100 segments)
         this.animator.onUpdate = (index, segmentProgress = 1) => {
             // Call original update
             originalOnUpdate.call(this, index, segmentProgress);
-            
+
             // Save state every 100 segments to avoid excessive writes
-            if (this.currentFilePath && index - lastSaveIndex >= 100) {
+            if (this.currentFilePath && Math.abs(index - lastSaveIndex) >= 100) {
                 lastSaveIndex = index;
-                // Save only metadata, not file content
-                this.saveViewerMetadata();
+                this.saveViewerState();
             }
         };
-    }
-
-    /**
-     * Save only metadata (called during playback)
-     */
-    saveViewerMetadata() {
-        if (!this.currentFilePath) return;
-        
-        try {
-            const state = {
-                filePath: this.currentFilePath,
-                animationIndex: this.animator.currentIndex,
-                layerMin: this.layerMin,
-                layerMax: this.layerMax,
-                toolStates: Array.from(this.tools.entries()),
-                currentView: this.currentView,
-                rapidMovesVisible: this.rapidMovesVisible,
-                rapidMoveColor: this.rapidMoveColor,
-                timestamp: Date.now()
-            };
-            
-            localStorage.setItem('fluidnc-viewer-state', JSON.stringify(state));
-        } catch (error) {
-            console.error('Failed to save viewer metadata:', error);
-        }
     }
 
     /**
      * Format file size for display
      */
     formatFileSize(bytes) {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        return this.formatBytes(bytes || 0);
     }
 
     /**
@@ -1047,15 +828,19 @@ class FluidNCController extends Controller {
      */
     openDB() {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open('FluidNCViewer', 1);
-            request.onupgradeneeded = (e) => {
-                const db = e.target.result;
-                if (!db.objectStoreNames.contains('files')) {
-                    db.createObjectStore('files', { keyPath: 'path' });
-                }
-            };
-            request.onsuccess = (e) => resolve(e.target.result);
-            request.onerror = () => reject(request.error);
+            try {
+                const request = indexedDB.open('FluidNCViewer', 1);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('files')) {
+                        db.createObjectStore('files', { keyPath: 'path' });
+                    }
+                };
+                request.onsuccess = (e) => resolve(e.target.result);
+                request.onerror = () => reject(request.error);
+            } catch (e) {
+                reject(e); // IndexedDB unavailable (a sandboxed iframe)
+            }
         });
     }
 
@@ -1066,14 +851,13 @@ class FluidNCController extends Controller {
         try {
             const db = await this.openDB();
             const tx = db.transaction('files', 'readwrite');
-            await tx.objectStore('files').put({
+            tx.objectStore('files').put({
                 path: filePath,
                 content: fileContent,
                 timestamp: Date.now()
             });
-            console.log('Cached file to IndexedDB:', filePath);
         } catch (error) {
-            console.error('Failed to cache file:', error);
+            console.warn('Failed to cache file:', error);
         }
     }
 
@@ -1083,41 +867,32 @@ class FluidNCController extends Controller {
     async getCachedFile(filePath) {
         try {
             const db = await this.openDB();
-            const tx = db.transaction('files', 'readonly');
-            const result = await tx.objectStore('files').get(filePath);
-            return result;
+            return await new Promise((resolve, reject) => {
+                const request = db.transaction('files', 'readonly').objectStore('files').get(filePath);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
         } catch (error) {
-            console.error('Failed to get cached file:', error);
+            console.warn('Failed to get cached file:', error);
             return null;
         }
     }
 
     /**
-     * Save viewer state to localStorage (file should already be cached in IndexedDB)
+     * Remember the previewed file and the view (the file itself is cached in IndexedDB),
+     * so reopening the WebUI comes back to it
      */
-    async saveViewerState() {
+    saveViewerState() {
         if (!this.currentFilePath) return;
-        
-        try {
-            
-            // Save metadata to localStorage
-            const state = {
-                filePath: this.currentFilePath,
-                animationIndex: this.animator.currentIndex,
-                layerMin: this.layerMin,
-                layerMax: this.layerMax,
-                toolStates: Array.from(this.tools.entries()),
-                currentView: this.currentView,
-                rapidMovesVisible: this.rapidMovesVisible,
-                rapidMoveColor: this.rapidMoveColor,
-                timestamp: Date.now()
-            };
-            
-            localStorage.setItem('fluidnc-viewer-state', JSON.stringify(state));
-            console.log('Saved viewer state');
-        } catch (error) {
-            console.error('Failed to save viewer state:', error);
-        }
+        Prefs.setJSON('fluidnc-viewer-state', {
+            filePath: this.currentFilePath,
+            animationIndex: this.animator.currentIndex,
+            toolStates: Array.from(this.tools.entries()),
+            currentView: this.currentView,
+            rapidMovesVisible: this.rapidMovesVisible,
+            rapidMoveColor: this.rapidMoveColor,
+            timestamp: Date.now()
+        });
     }
 
     /**
@@ -1125,49 +900,38 @@ class FluidNCController extends Controller {
      */
     async restoreViewerState() {
         try {
-            const saved = localStorage.getItem('fluidnc-viewer-state');
-            if (!saved) return;
-            
-            const state = JSON.parse(saved);
+            const state = Prefs.getJSON('fluidnc-viewer-state');
+            if (!state) return;
             const ageHours = (Date.now() - state.timestamp) / 3600000;
-            
+
             // Clear if older than 24 hours
             if (ageHours > 24) {
-                localStorage.removeItem('fluidnc-viewer-state');
-                console.log('Cleared stale viewer state (age: ' + ageHours.toFixed(1) + ' hours)');
+                this.clearViewerState();
                 return;
             }
-            
+
             // Try to load from IndexedDB cache
             const cached = await this.getCachedFile(state.filePath);
             if (!cached || !cached.content) {
-                console.log('No cached file found for:', state.filePath);
-                localStorage.removeItem('fluidnc-viewer-state');
+                this.clearViewerState();
                 return;
             }
-            
-            console.log('Restoring viewer state from cache...');
-            
-            // Show progress
+
             const progressBar = document.getElementById('progress-bar');
             const progressFill = document.getElementById('progress-fill');
             if (progressBar) progressBar.classList.remove('hidden');
             if (progressFill) progressFill.style.width = '0%';
-            
+
             // Parse the cached file
             const filename = state.filePath.split('/').pop();
             this.loadingFilePath = state.filePath;
             await this.processGCode(cached.content, filename);
-            
+
             // Restore viewer settings
             this.currentFilePath = state.filePath;
-            this.animator.currentIndex = state.animationIndex || 0;
-            this.layerMin = state.layerMin;
-            this.layerMax = state.layerMax;
-            this.currentView = state.currentView || '2d';
             this.rapidMovesVisible = state.rapidMovesVisible !== undefined ? state.rapidMovesVisible : true;
             this.rapidMoveColor = state.rapidMoveColor || '#999999';
-            
+
             // Restore tool states
             if (state.toolStates && Array.isArray(state.toolStates)) {
                 state.toolStates.forEach(([toolNum, toolState]) => {
@@ -1176,29 +940,20 @@ class FluidNCController extends Controller {
                     }
                 });
             }
-            
-            // Update UI
+
             this.updateToolPanel();
             this.updateRenderers();
+            if (state.currentView) this.setView(state.currentView);
+            if (!this.following) this.animator.setCurrentLine(state.animationIndex || 0);
             this.render();
-            
-            // Switch to correct view
-            if (this.currentView === '3d') {
-                this.canvas2d.style.display = 'none';
-                this.canvas3d.style.display = 'block';
-                this.canvas3dOverlay.style.display = 'block';
-            }
-            
-            progressFill.style.width = '100%';
+
+            if (progressFill) progressFill.style.width = '100%';
             setTimeout(() => {
-                progressBar.classList.add('hidden');
+                if (progressBar) progressBar.classList.add('hidden');
             }, 500);
-            
-            console.log('Viewer state restored successfully');
         } catch (error) {
             console.error('Failed to restore viewer state:', error);
-            // Clear invalid state
-            localStorage.removeItem('fluidnc-viewer-state');
+            this.clearViewerState();
         }
     }
 
@@ -1206,12 +961,13 @@ class FluidNCController extends Controller {
      * Clear viewer state (called when job completes or file is closed)
      */
     clearViewerState() {
-        localStorage.removeItem('fluidnc-viewer-state');
-        console.log('Cleared viewer state');
+        Prefs.remove('fluidnc-viewer-state');
     }
 }
 
-// Initialize FluidNC Controller when DOM is ready
+// The WebUI extension: talks to FluidNC through the WebUI (FigUI makes its own)
 window.addEventListener('DOMContentLoaded', () => {
-    new FluidNCController();
+    if (document.body.dataset.host === 'fluidnc') {
+        new FluidNCController(new FluidNCAPI());
+    }
 });
