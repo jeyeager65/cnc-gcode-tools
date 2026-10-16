@@ -39,6 +39,7 @@ $builds = @(
         DeleteHtmlAfterGzip = $true
         JsFiles = @(
             "src/js/fluidnc-api.js",
+            "src/js/gcode-expander.js",
             "src/js/parser.js",
             "src/js/camera.js",
             "src/js/renderer2d.js",
@@ -49,6 +50,7 @@ $builds = @(
         )
         ScriptTags = @"
     <script src="js/fluidnc-api.js"></script>
+    <script src="js/gcode-expander.js"></script>
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
     <script src="js/renderer2d.js"></script>
@@ -64,6 +66,7 @@ $builds = @(
         OutputName = "gcodeviewer"
         SkipGzip = $true
         JsFiles = @(
+            "src/js/gcode-expander.js",
             "src/js/parser.js",
             "src/js/camera.js",
             "src/js/renderer2d.js",
@@ -72,6 +75,7 @@ $builds = @(
             "src/js/controller.js"
         )
         ScriptTags = @"
+    <script src="js/gcode-expander.js"></script>
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
     <script src="js/renderer2d.js"></script>
@@ -106,6 +110,19 @@ $builds = @(
     <script src="js/font-creator-app.js"></script>
 "@
         CssFiles = @("src/css/common.css", "src/css/font-creator.css")
+    },
+    @{
+        Name = "GCode Expander"
+        SourceHtml = "src/gcodeexpand.html"
+        OutputName = "gcodeexpand"
+        SkipGzip = $true
+        JsFiles = @(
+            "src/js/gcode-expander.js"
+        )
+        ScriptTags = @"
+<script src="js/gcode-expander.js"></script>
+"@
+        CssFiles = @("src/css/common.css")
     }
 )
 
@@ -114,7 +131,8 @@ foreach ($build in $builds) {
     
     # Copy and process HTML
     Write-Host "Processing HTML..." -ForegroundColor Cyan
-    $html = Get-Content $build.SourceHtml -Raw
+    # Normalize line endings so ScriptTags match source HTML saved with either LF or CRLF
+    $html = (Get-Content $build.SourceHtml -Raw) -replace "`r`n", "`n"
     $html = $html -replace '{{VERSION}}', $version
 
     # Inline CSS
@@ -163,7 +181,8 @@ foreach ($build in $builds) {
 
     # Replace script tags with inline minified JS
     $inlineScript = "<script>$minifiedJs</script>"
-    $html = $html -replace [regex]::Escape($build.ScriptTags), $inlineScript
+    $scriptTags = $build.ScriptTags -replace "`r`n", "`n"
+    $html = $html.Replace($scriptTags, $inlineScript)  # literal: minified JS contains $ sequences
 
     # Minify HTML - remove comments and extra whitespace
     $html = $html -replace '<!--[\s\S]*?-->', ''
@@ -235,3 +254,37 @@ New-Item -Path "dist/.nojekyll" -ItemType File -Force | Out-Null
 # Copy landing page to dist for GitHub Pages
 Write-Host "Copying index.html landing page for GitHub Pages..." -ForegroundColor Cyan
 Copy-Item -Path "src/index.html" -Destination "dist/index.html"
+
+# Package the VS Code extension (.vsix) for "Install from VSIX..."
+# It is staged under dist/ so the viewer files it needs from src/ can be added
+# without touching the vscode-extension/ folder.
+Write-Host "`nPackaging VS Code extension..." -ForegroundColor Cyan
+$extStage = "dist/vscode-extension-stage"
+Copy-Item -Path "vscode-extension" -Destination $extStage -Recurse
+
+# The viewer webview and the expander load these from viewer/ (same list as install-vscode-extension.ps1)
+$viewerDir = "$extStage/viewer"
+New-Item -ItemType Directory -Force -Path $viewerDir | Out-Null
+"gcode-expander.js", "parser.js", "camera.js", "renderer2d.js", "renderer3d.js", "animator.js", "controller.js" | ForEach-Object {
+    Copy-Item "src/js/$_" $viewerDir
+}
+Copy-Item "src/css/common.css" $viewerDir
+
+$extManifest = Get-Content "$extStage/package.json" -Raw | ConvertFrom-Json
+$vsixName = "cnc-gcode-tools-$($extManifest.version).vsix"
+Push-Location $extStage
+try {
+    npx --yes @vscode/vsce@3 package --out "../$vsixName"
+    $vsceExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+Remove-Item $extStage -Recurse -Force
+if ($vsceExit -ne 0) {
+    Write-Host "VS Code extension packaging failed" -ForegroundColor Red
+    exit 1
+}
+Write-Host "  Output: dist/$vsixName ($([math]::Round((Get-Item "dist/$vsixName").Length/1KB, 2)) KB)" -ForegroundColor Yellow
+
+# Fixed-name copy so the GitHub Pages landing page can always link to the latest
+Copy-Item "dist/$vsixName" "dist/cnc-gcode-tools.vsix"

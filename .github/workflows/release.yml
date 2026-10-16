@@ -16,14 +16,14 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'  # @vscode/vsce (VS Code extension packaging) needs Node 20+
       
       - name: Install Terser
         run: npm install -g terser
@@ -43,17 +43,25 @@ jobs:
           GCODEVIEWER_SIZE=$(stat -c%s dist/gcodeviewer.html | numfmt --to=iec-i --suffix=B)
           GCODEVIEWER_GZ_SIZE=$(stat -c%s dist/gcodeviewer.html.gz | numfmt --to=iec-i --suffix=B)
           FONTCREATOR_SIZE=$(stat -c%s dist/fontcreator.html | numfmt --to=iec-i --suffix=B)
-          
+          GCODEEXPAND_SIZE=$(stat -c%s dist/gcodeexpand.html | numfmt --to=iec-i --suffix=B)
+          VSIX_FILE=$(ls dist/cnc-gcode-tools-*.vsix)
+          VSIX_SIZE=$(stat -c%s "$VSIX_FILE" | numfmt --to=iec-i --suffix=B)
+
+          echo "VSIX_NAME=$(basename "$VSIX_FILE")" >> $GITHUB_OUTPUT
+          echo "VSIX_SIZE=${VSIX_SIZE}" >> $GITHUB_OUTPUT
           echo "SOURCE_SIZE=${SOURCE_SIZE}" >> $GITHUB_OUTPUT
           echo "GCODEVIEWER_SIZE=${GCODEVIEWER_SIZE}" >> $GITHUB_OUTPUT
           echo "GCODEVIEWER_GZ_SIZE=${GCODEVIEWER_GZ_SIZE}" >> $GITHUB_OUTPUT
           echo "FONTCREATOR_SIZE=${FONTCREATOR_SIZE}" >> $GITHUB_OUTPUT
+          echo "GCODEEXPAND_SIZE=${GCODEEXPAND_SIZE}" >> $GITHUB_OUTPUT
           
           echo "File Sizes:"
           echo "  Source: ${SOURCE_SIZE}"
           echo "  GCode Viewer: ${GCODEVIEWER_SIZE}"
           echo "  FluidNC Extension: ${GCODEVIEWER_GZ_SIZE} (gzipped)"
           echo "  Font Creator: ${FONTCREATOR_SIZE}"
+          echo "  GCode Expander: ${GCODEEXPAND_SIZE}"
+          echo "  VS Code Extension: ${VSIX_SIZE}"
       
       - name: Generate changelog
         id: changelog
@@ -114,6 +122,8 @@ jobs:
             dist/gcodeviewer.html
             dist/gcodeviewer.html.gz
             dist/fontcreator.html
+            dist/gcodeexpand.html
+            dist/cnc-gcode-tools-*.vsix
             dist/CHANGELOG.md
           body: |
             # CNC GCode Tools ${{ steps.version.outputs.VERSION }}
@@ -125,6 +135,8 @@ jobs:
             - **GCode Viewer**: ${{ steps.sizes.outputs.GCODEVIEWER_SIZE }}
             - **FluidNC Extension**: ${{ steps.sizes.outputs.GCODEVIEWER_GZ_SIZE }} (gzipped)
             - **Font Creator**: ${{ steps.sizes.outputs.FONTCREATOR_SIZE }}
+            - **GCode Expander**: ${{ steps.sizes.outputs.GCODEEXPAND_SIZE }}
+            - **VS Code Extension**: ${{ steps.sizes.outputs.VSIX_SIZE }}
             
             ## Deployment Instructions
 
@@ -146,7 +158,15 @@ jobs:
             ### For local use:
             1. Download `gcodeviewer.html` (standalone viewer)
             2. Open directly in a modern browser
-            3. No server required - runs completely offline            
+            3. No server required - runs completely offline
+
+            ### VS Code extension (CNC GCode Tools for FluidNC):
+            1. Download `${{ steps.sizes.outputs.VSIX_NAME }}`
+            2. In VS Code: Extensions view → `…` menu → **Install from VSIX…**, or run
+               ```bash
+               code --install-extension ${{ steps.sizes.outputs.VSIX_NAME }}
+               ```
+            3. Also works in Cursor and VSCodium. Install a newer `.vsix` the same way to update.
             
           draft: false
           prerelease: false
