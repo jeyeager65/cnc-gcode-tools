@@ -219,6 +219,7 @@ class Renderer2D {
         
         // Group segments by type and tool for batched rendering
         const rapidSegments = [];
+        const probeSegments = []; // G38.x, drawn to full travel since the contact point isn't known
         const cutSegmentsByTool = {}; // { toolNum: [segments] }
         let partialSegment = null;
         
@@ -235,6 +236,8 @@ class Renderer2D {
                 if (this.rapidMovesVisible) {
                     rapidSegments.push(seg);
                 }
+            } else if (seg.type === 'probe') {
+                probeSegments.push(seg);
             } else {
                 const tool = seg.tool || 0;
                 
@@ -286,7 +289,15 @@ class Renderer2D {
             
             this.drawSegmentBatch(cutSegmentsByTool[tool]);
         }
-        
+
+        // Draw probe moves, dashed: they stop at contact, somewhere along the line
+        if (probeSegments.length > 0) {
+            this.ctx.strokeStyle = theme === 'dark' ? '#ff6b6b' : '#d62828';
+            this.ctx.setLineDash([3 / zoom, 3 / zoom]);
+            this.drawSegmentBatch(probeSegments);
+            this.ctx.setLineDash([]);
+        }
+
         // Draw partial segment
         if (partialSegment) {
             const { seg, tool } = partialSegment;

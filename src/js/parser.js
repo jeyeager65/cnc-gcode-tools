@@ -5,6 +5,12 @@
 
 class GCodeParser {
     constructor() {
+        // Machine values (e.g. from a FluidNC config.yaml via parseFluidNCConfig) used when
+        // expanding parametric files. Kept across files, so not part of reset().
+        this.machineValues = null;
+        // User-entered values for parameters set outside the file (FluidNC globals such as
+        // #<_tool_radius>), keyed like machineValues. Only fill in what nothing else sets.
+        this.inputValues = {};
         this.reset();
     }
 
@@ -16,8 +22,18 @@ class GCodeParser {
         this.plane = 'XY'; // G17/G18/G19
         this.feedRate = 0;
         this.currentTool = 1; // Start at Tool 1
-        this.motionMode = null; // G0, G1, G2, or G3 - modal command
-        
+        this.motionMode = null; // 0, 1, 2, 3 or 38 (G38.x probe) - modal command
+
+        // Work offsets. Segments are drawn in the frame of the file's starting work
+        // coordinate system, so a job that never changes offsets draws exactly as written.
+        // `position` is in that frame; a line's coordinates are relative to the active
+        // work offset: wcsOffsets[wcs] (G54-G59.3, set by G10 L2/L20) plus g92 (G92).
+        this.wcs = 1; // 1 = G54 ... 6 = G59, 7-9 = G59.1-G59.3
+        this.wcsOffsets = Array.from({ length: 10 }, () => ({ x: 0, y: 0, z: 0 }));
+        this.g92 = { x: 0, y: 0, z: 0 };
+        this.g92Saved = null; // G92.2 suspends G92, G92.3 restores it
+        this.lineMachineCoords = false; // G53 on the current line
+
         // Tool names extracted from comments
         this.toolNames = [];
         this.toolColors = []; // Custom colors for tools (hex format)
@@ -26,6 +42,9 @@ class GCodeParser {
         this.inlineToolOccurrence = new Map(); // Tracks which occurrence of each tool number we're on
         this.lastToolChangeType = null; // 'M0' for manual, 'M6' for automatic, null for none
         
+        // Parametric expansion info for the last parse (null for plain G-code)
+        this.expansion = null;
+
         // Output
         this.segments = [];
         this.bounds = {
@@ -43,7 +62,40 @@ class GCodeParser {
      */
     async parseString(gcodeString, onProgress) {
         this.reset();
-        
+
+        // Expand parametric G-code (variables, O-word if/while) into plain moves.
+        // Segment lineNum values then refer to lines of expansion.output, and
+        // expansion.sourceMap maps those back to lines of the original source.
+        if (typeof isParametricGCode === 'function' && isParametricGCode(gcodeString)) {
+            const sourceLines = gcodeString.split(/\r?\n/);
+            try {
+                const result = expandLines(sourceLines, 'parametric source', {
+                    keepComments: true,
+                    machineValues: this.machineValues,
+                    inputs: this.inputValues
+                });
+                this.expansion = {
+                    sourceText: gcodeString,
+                    output: result.output,
+                    sourceMap: result.sourceMap,
+                    warnings: result.warnings,
+                    external: result.external,
+                    error: null
+                };
+                gcodeString = result.output;
+            } catch (e) {
+                console.error('Failed to expand parametric G-code:', e);
+                this.expansion = {
+                    sourceText: gcodeString,
+                    output: null,
+                    sourceMap: null,
+                    warnings: [],
+                    external: [],
+                    error: e.message
+                };
+            }
+        }
+
         const lines = gcodeString.split('\n');
         const totalLines = lines.length;
         
@@ -198,19 +250,23 @@ class GCodeParser {
         const words = this.extractWords(line);
         if (words.length === 0) return;
         
-        // Process commands
+        // Process commands. motionProcessed: the line's axis words have been used, either by
+        // a motion command or by a command that takes axis words as arguments (G10, G28,
+        // G30, G92), so the modal motion mode must not turn them into a move.
         let motionProcessed = false;
-        
+        this.lineMachineCoords = words.some(([letter, value]) => letter === 'G' && value === 53);
+        // A feed rate applies to the move on its own line, wherever the F word is
+        const feedWord = words.find(([letter]) => letter === 'F');
+        if (feedWord) this.feedRate = feedWord[1];
+
         for (const [letter, value] of words) {
             switch (letter) {
                 case 'G':
                     const gcode = Math.floor(value);
-                    // Check if this is a motion command (G0/G1/G2/G3)
-                    const isMotionCommand = gcode === 0 || gcode === 1 || gcode === 2 || gcode === 3;
-                    if (isMotionCommand) {
-                        motionProcessed = true; // Motion command found, don't apply modal later
+                    if (gcode <= 3 || gcode === 38 || gcode === 10 || gcode === 28 || gcode === 30 || gcode === 92) {
+                        motionProcessed = true;
                     }
-                    this.processGCode(gcode, words, lineNum);
+                    this.processGCode(gcode, words, lineNum, value);
                     break;
                 case 'M':
                     this.processMCode(Math.floor(value), words, lineNum);
@@ -233,9 +289,6 @@ class GCodeParser {
                         this.currentTool = toolNum;
                     }
                     break;
-                case 'F':
-                    this.feedRate = value;
-                    break;
             }
         }
         
@@ -247,9 +300,9 @@ class GCodeParser {
             );
             
             if (hasPositionCoords) {
-                // Only apply modal motion for linear moves (G0/G1)
+                // Only apply modal motion for linear and probe moves (G0/G1/G38.x)
                 // Arc moves (G2/G3) require explicit I/J/K parameters each time
-                if (this.motionMode === 0 || this.motionMode === 1) {
+                if (this.motionMode === 0 || this.motionMode === 1 || this.motionMode === 38) {
                     this.processGCode(this.motionMode, words, lineNum);
                 } else if (this.motionMode === 2 || this.motionMode === 3) {
                     // For arcs, check if I/J/K parameters are present
@@ -295,8 +348,32 @@ class GCodeParser {
     /**
      * Process G-code command
      */
-    processGCode(code, words, lineNum) {
+    processGCode(code, words, lineNum, value = code) {
+        // Sub-codes: G38.2, G59.1, G92.1, ... (tenths, rounded against float noise)
+        const sub = Math.round((value - code) * 10);
         switch (code) {
+            case 38: // Probe toward the target, stopping at contact (G38.2-G38.5).
+                // Where it touches isn't known, so the full programmed move is drawn.
+                if (sub < 2 || sub > 5) return false;
+                this.motionMode = 38;
+                return this.linearMove(words, 'probe', lineNum);
+            case 10: // Set work offsets
+                return this.setWorkOffset(words);
+            case 28: // Go to the stored G28/G30 position, via an intermediate point
+            case 30:
+                // G28.1 / G30.1 store the position; the stored position itself isn't
+                // known, so only the move to the intermediate point is drawn
+                if (sub === 0) this.linearMove(words, 'rapid', lineNum);
+                return false;
+            case 92:
+                this.setG92(sub, words);
+                return false;
+            case 54: case 55: case 56: case 57: case 58:
+                this.wcs = code - 53;
+                return false;
+            case 59: // G59, G59.1, G59.2, G59.3
+                this.wcs = 6 + Math.min(sub, 3);
+                return false;
             case 0: // Rapid move
                 this.motionMode = 0;
                 return this.linearMove(words, 'rapid', lineNum);
@@ -332,6 +409,57 @@ class GCodeParser {
                 return false;
             default:
                 return false;
+        }
+    }
+
+    /**
+     * Total offset of the active work coordinate system from the drawing frame
+     */
+    workOffset() {
+        const w = this.wcsOffsets[this.wcs];
+        return { x: w.x + this.g92.x, y: w.y + this.g92.y, z: w.z + this.g92.z };
+    }
+
+    /**
+     * G10 L2 Pn: set coordinate system n's offset to the given values.
+     * G10 L20 Pn: set it so the current position has the given coordinates in system n.
+     * P0 (or no P) is the active system. Axes that aren't given keep their offset.
+     * The tool doesn't move; later coordinates are read against the new offset.
+     */
+    setWorkOffset(words) {
+        const word = (letter) => { const w = words.find(([l]) => l === letter); return w ? w[1] : null; };
+        const l = word('L'), p = Math.round(word('P') || 0);
+        if ((l !== 2 && l !== 20) || p < 0 || p > 9) return false;
+        const offset = this.wcsOffsets[p || this.wcs];
+        for (const [letter, value] of words) {
+            const axis = letter.toLowerCase();
+            if (axis !== 'x' && axis !== 'y' && axis !== 'z') continue;
+            offset[axis] = l === 2 ? value : this.position[axis] - this.g92[axis] - value;
+        }
+        return false;
+    }
+
+    /**
+     * G92: offset the current position to the given coordinates; G92.1 clears it,
+     * G92.2 suspends it and G92.3 restores it
+     */
+    setG92(sub, words) {
+        if (sub === 0) {
+            const w = this.wcsOffsets[this.wcs];
+            for (const [letter, value] of words) {
+                const axis = letter.toLowerCase();
+                if (axis !== 'x' && axis !== 'y' && axis !== 'z') continue;
+                this.g92[axis] = this.position[axis] - w[axis] - value;
+            }
+        } else if (sub === 1) {
+            this.g92 = { x: 0, y: 0, z: 0 };
+            this.g92Saved = null;
+        } else if (sub === 2) {
+            this.g92Saved = this.g92;
+            this.g92 = { x: 0, y: 0, z: 0 };
+        } else if (sub === 3 && this.g92Saved) {
+            this.g92 = this.g92Saved;
+            this.g92Saved = null;
         }
     }
 
@@ -407,10 +535,16 @@ class GCodeParser {
      */
     extractTarget(words) {
         const target = { ...this.position };
-        
+        // Absolute coordinates are in the active work coordinate system, or in machine
+        // coordinates with G53 (taken here as the drawing frame with no offsets)
+        const offset = this.lineMachineCoords ? { x: 0, y: 0, z: 0 } : this.workOffset();
+
         for (const [letter, value] of words) {
-            const actualValue = this.absolute ? value : this.position[letter.toLowerCase()] + value;
-            
+            const axis = letter.toLowerCase();
+            const actualValue = this.absolute || this.lineMachineCoords
+                ? value + offset[axis]
+                : this.position[axis] + value;
+
             switch (letter) {
                 case 'X':
                     target.x = actualValue;

@@ -83,6 +83,7 @@ class FluidNCController extends Controller {
         const stateMatch = content.match(/<([^|>]+)/);
         if (stateMatch) {
             const state = stateMatch[1];
+            this.machineState = state;
             const statusMachineState = document.getElementById('status-machine-state');
             if (statusMachineState) {
                 statusMachineState.textContent = state;
@@ -447,6 +448,69 @@ class FluidNCController extends Controller {
     }
 
     /**
+     * Read the machine values a parametric file refers to straight from the controller:
+     * config values (#</axes/x/max_travel_mm>) with $/ setting queries, and globals
+     * (#<_x>) and numbered parameters (#5221) with the D word. The values are a snapshot
+     * of the machine now, so the preview matches the start of the job.
+     * Only queries while the machine is Idle. Returns machineValues for the expander, or null.
+     */
+    async readMachineValues(text) {
+        if (this.machineState && this.machineState !== 'Idle') {
+            console.log('[FluidNC] Not reading machine values while', this.machineState);
+            return null;
+        }
+
+        // Parameter references outside comments: #</config/path>, #<_global>, #123
+        const refs = new Map();  // expander key -> { kind, ref }
+        for (const line of text.split('\n')) {
+            const code = line.replace(/\([^)]*\)/g, '').replace(/;.*$/, '');
+            for (const m of code.matchAll(/#<\s*([_/][^>]*?)\s*>|#(\d+)/g)) {
+                if (m[1] !== undefined) {
+                    const name = m[1];
+                    refs.set(name.toLowerCase(), name[0] === '/'
+                        ? { kind: 'setting', ref: name }
+                        : { kind: 'param', ref: '#<' + name + '>' });
+                } else {
+                    refs.set('#' + parseInt(m[2], 10), { kind: 'param', ref: '#' + parseInt(m[2], 10) });
+                }
+            }
+        }
+        if (refs.size === 0) return null;
+
+        const MAX_QUERIES = 50;
+        const values = {};
+        let paramQueriesWork = true;  // stop D queries if the controller doesn't answer one
+        let count = 0;
+        for (const [key, { kind, ref }] of [...refs].slice(0, MAX_QUERIES)) {
+            let value = null;
+            if (kind === 'setting') {
+                const raw = ((await this.fluidAPI.readSetting(ref)).value || '').trim();
+                if (/^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i.test(raw)) value = parseFloat(raw);
+                else if (/^true$/i.test(raw)) value = 1;
+                else if (/^false$/i.test(raw)) value = 0;
+            } else if (paramQueriesWork) {
+                const result = await this.fluidAPI.queryParameter(ref);
+                if (result.timedOut) paramQueriesWork = false;
+                value = result.value;
+            }
+            if (value !== null && !isNaN(value)) {
+                values[key] = value;
+                count++;
+            }
+        }
+        console.log(`[FluidNC] Read ${count} of ${refs.size} machine values from the controller`, values);
+        return { values, source: 'the controller', live: true, count };
+    }
+
+    /**
+     * Re-expand and redraw the current file (after entering outside values)
+     */
+    reloadCurrentGCode() {
+        const filename = (this.currentFilePath || '').split('/').pop() || 'file.nc';
+        return this.processGCode(this.gcodeText, filename);
+    }
+
+    /**
      * Process GCode content (reusing existing logic)
      */
     async processGCode(text, filename) {
@@ -458,7 +522,12 @@ class FluidNCController extends Controller {
             // Create a Blob from the text to use parseFile
             const blob = new Blob([text], { type: 'text/plain' });
             const file = new File([blob], filename, { type: 'text/plain' });
-            
+
+            // Parametric files: read the machine values they refer to from the controller
+            this.parser.machineValues = typeof isParametricGCode === 'function' && isParametricGCode(text)
+                ? await this.readMachineValues(text)
+                : null;
+
             // Parse GCode using the parser's parseFile method
             const segments = await this.parser.parseFile(file, (percent) => {
                 progressFill.style.width = percent + '%';
@@ -469,6 +538,7 @@ class FluidNCController extends Controller {
             this.segments = segments;
             this.bounds = bounds;
             this.gcodeText = text;
+            this.segmentBytePositions = null; // Recalculated lazily for the new file
             this.hasRefittedCamera = false; // Reset flag for new file
 
             // Detect tools used in the file
@@ -673,9 +743,11 @@ class FluidNCController extends Controller {
                 }
                 lastUpdateTime = now;
                 
-                // Calculate actual segment position from byte position
+                // Calculate actual segment position from byte position.
+                // FluidNC reports progress through the parametric source, which loops make
+                // non-monotonic, so expanded files rely on the time-based prediction alone.
                 const bytePosition = Math.floor((percent / 100) * totalBytes);
-                const actualIndex = this.findSegmentByBytePosition(bytePosition);
+                const actualIndex = this.gcodeExpansion ? -1 : this.findSegmentByBytePosition(bytePosition);
                 
                 // Periodically save state during execution
                 if (now - lastStateSaveTime > stateSaveInterval) {
@@ -830,7 +902,7 @@ class FluidNCController extends Controller {
                 // Rapid moves - assume fixed rapid rate (most machines ~5000-10000 mm/min)
                 const rapidRate = 6000; // Conservative estimate
                 segmentTime = distance > 0 ? (distance / rapidRate) * 60 : 0; // Convert to seconds
-            } else if (seg.type === 'cut' || seg.type === 'G1' || seg.type === 'G2' || seg.type === 'G3') {
+            } else if (seg.type === 'cut' || seg.type === 'probe' || seg.type === 'G1' || seg.type === 'G2' || seg.type === 'G3') {
                 // Feed moves - use actual feed rate
                 segmentTime = distance > 0 ? (distance / feedRate) * 60 : 0; // Convert to seconds
             }

@@ -90,7 +90,13 @@
                 <h3>Load File</h3>
                 <div class="file-upload-zone" id="upload-zone">
                     <p>📁 Drop GCode file here<br>or click to browse</p>
-                    <input type="file" id="file-input" accept=".nc,.gcode,.txt">
+                    <input type="file" id="file-input" accept=".nc,.gcode,.ngc,.gco,.txt">
+                </div>
+                <div class="machine-config" title="A FluidNC config.yaml supplies #</...> config values when previewing parametric files">
+                    <button type="button" id="btn-load-config">Load config.yaml</button>
+                    <span id="machine-config-status">No machine config loaded</span>
+                    <button type="button" id="btn-clear-config" class="hidden" title="Stop using this config">✕</button>
+                    <input type="file" id="config-input" accept=".yaml,.yml" hidden>
                 </div>
                 <div class="progress-bar hidden" id="progress-bar">
                     <div class="progress-fill" id="progress-fill"></div>
@@ -230,6 +236,7 @@
         </footer>
     </div>
 
+    <script src="js/gcode-expander.js"></script>
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
     <script src="js/renderer2d.js"></script>

@@ -106,7 +106,9 @@ class Animator {
             }
             
             // Calculate move time based on type with junction velocities
-            if (seg.type === 'cut' && seg.feedRate > 0) {
+            if ((seg.type === 'cut' || seg.type === 'probe') && seg.feedRate > 0) {
+                // Probe moves run at the feed rate; counting their full travel gives
+                // an upper bound, since they stop at contact
                 const feedRate = seg.feedRate;
                 const prevFeedRate = prevSeg && prevSeg.type === 'cut' ? prevSeg.feedRate : 0;
                 const nextFeedRate = nextSeg && nextSeg.type === 'cut' ? nextSeg.feedRate : 0;

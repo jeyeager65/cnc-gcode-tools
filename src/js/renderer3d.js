@@ -190,7 +190,9 @@ class Renderer3D {
         
         // Convert custom rapid move color to RGB
         const rapidColor = this.hexToRgb(this.rapidMoveColor);
-        
+        // G38.x probe moves (matches the 2D renderer)
+        const probeColor = theme === 'dark' ? [1.0, 0.42, 0.42] : [0.84, 0.16, 0.16];
+
         // Tool colors - each tool gets a distinct color
         const toolColors = [
             theme === 'dark' ? [0.0, 0.8, 1.0] : [0.0, 0.4, 0.8],   // Tool 0: Cyan/Blue
@@ -203,8 +205,10 @@ class Renderer3D {
             theme === 'dark' ? [0.0, 1.0, 1.0] : [0.0, 0.7, 0.7],   // Tool 7: Cyan
         ];
         
-        const positions = [];
-        const colors = [];
+        // Rapids and cuts are collected separately and the cuts drawn last, so a cut
+        // isn't hidden by a rapid along the same line (e.g. a plunge and its retract)
+        const rapid = { positions: [], colors: [] };
+        const cut = { positions: [], colors: [] };
         
         for (let i = 0; i < Math.min(this.segments.length, this.maxSegmentIndex); i++) {
             const seg = this.segments[i];
@@ -221,17 +225,19 @@ class Renderer3D {
             
             // Skip if tool is hidden
             const toolNum = seg.tool || 0;
-            if (seg.type !== 'rapid' && this.toolStates.has(toolNum)) {
+            if (seg.type === 'cut' && this.toolStates.has(toolNum)) {
                 const toolState = this.toolStates.get(toolNum);
                 if (!toolState.visible) {
                     continue;
                 }
             }
-            
+
             // Choose color based on segment type and tool
             let color;
             if (seg.type === 'rapid') {
                 color = rapidColor;
+            } else if (seg.type === 'probe') {
+                color = probeColor;
             } else {
                 // Use custom color if tool state exists, otherwise use default
                 if (this.toolStates.has(toolNum)) {
@@ -243,13 +249,15 @@ class Renderer3D {
                 }
             }
             
+            const target = seg.type === 'rapid' ? rapid : cut;
+            
             // Start vertex
-            positions.push(seg.start.x, seg.start.y, seg.start.z);
-            colors.push(...color);
+            target.positions.push(seg.start.x, seg.start.y, seg.start.z);
+            target.colors.push(...color);
             
             // End vertex
-            positions.push(seg.end.x, seg.end.y, seg.end.z);
-            colors.push(...color);
+            target.positions.push(seg.end.x, seg.end.y, seg.end.z);
+            target.colors.push(...color);
         }
         
         // Handle partial segment (current segment being animated)
@@ -264,15 +272,17 @@ class Renderer3D {
                     let shouldRender = true;
                     
                     // Skip if tool is hidden
-                    if (seg.type !== 'rapid' && this.toolStates.has(toolNum)) {
+                    if (seg.type === 'cut' && this.toolStates.has(toolNum)) {
                         shouldRender = this.toolStates.get(toolNum).visible;
                     }
-                    
+
                     if (shouldRender) {
                         // Choose color
                         let color;
                         if (seg.type === 'rapid') {
                             color = rapidColor;
+                        } else if (seg.type === 'probe') {
+                            color = probeColor;
                         } else {
                             if (this.toolStates.has(toolNum)) {
                                 const hexColor = this.toolStates.get(toolNum).color;
@@ -288,18 +298,22 @@ class Renderer3D {
                         const endY = seg.start.y + (seg.end.y - seg.start.y) * this.segmentProgress;
                         const endZ = seg.start.z + (seg.end.z - seg.start.z) * this.segmentProgress;
                         
+                        const target = seg.type === 'rapid' ? rapid : cut;
+                        
                         // Start vertex
-                        positions.push(seg.start.x, seg.start.y, seg.start.z);
-                        colors.push(...color);
+                        target.positions.push(seg.start.x, seg.start.y, seg.start.z);
+                        target.colors.push(...color);
                         
                         // Partial end vertex
-                        positions.push(endX, endY, endZ);
-                        colors.push(...color);
+                        target.positions.push(endX, endY, endZ);
+                        target.colors.push(...color);
                     }
                 }
             }
         }
         
+        const positions = rapid.positions.concat(cut.positions);
+        const colors = rapid.colors.concat(cut.colors);
         this.vertexCount = positions.length / 3;
         
         // Update position buffer

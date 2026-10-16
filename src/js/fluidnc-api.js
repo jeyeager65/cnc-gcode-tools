@@ -54,6 +54,13 @@ class FluidNCAPI {
         if (!eventMsg.data.id || eventMsg.data.id === this.extensionName || eventMsg.data.id === this.extensionName + 'Setting') {
             const { type, content } = eventMsg.data;
 
+            // Replies to readSetting() / queryParameter(), whichever way they arrive
+            if (type === 'stream' && typeof content === 'string') {
+                this.handleQueryReply(content);
+            } else if (type === 'cmd' && content && typeof content.response === 'string') {
+                this.handleQueryReply(content.response);
+            }
+
             // Handle command responses (type: 'cmd' or 'stream' with successful response)
             if ((type === 'stream' || type === 'cmd') && content) {
                 // Check if it's a successful command response with a setting
@@ -304,6 +311,66 @@ class FluidNCAPI {
             id: this.extensionName,
             content: command
         });
+    }
+
+    /**
+     * Send a command and wait for the one reply line that parseLine recognizes.
+     * Resolves { value, timedOut }: value is null when the controller answers with an
+     * error or doesn't answer in time. Meant to be awaited one query at a time.
+     */
+    _query(command, parseLine, timeoutMs) {
+        return new Promise((resolve) => {
+            if (!this.isInIframe) {
+                resolve({ value: null, timedOut: false });
+                return;
+            }
+            const id = ++this.messageId;
+            const finish = (value, timedOut) => {
+                if (this.pendingRequests.delete(id)) resolve({ value, timedOut });
+            };
+            // No `command` field, so the older reply handlers leave this request alone
+            this.pendingRequests.set(id, { kind: 'query', parseLine, finish });
+            this.sendMessage({ type: 'cmd', target: 'webui', id: this.extensionName, content: command });
+            setTimeout(() => finish(null, true), timeoutMs);
+        });
+    }
+
+    /**
+     * Read a config setting: "$/axes/x/max_travel_mm" -> "$/axes/x/max_travel_mm=300".
+     * Resolves { value: '300' | null, timedOut }.
+     */
+    readSetting(path, timeoutMs = 3000) {
+        const command = '$' + path;
+        return this._query(command, (line) =>
+            line.startsWith(command + '=') ? line.slice(command.length + 1).trim() : undefined, timeoutMs);
+    }
+
+    /**
+     * Read a parameter with the D word: "D#<_x>" -> "[MSG:INFO: Value is 2.000]".
+     * Resolves { value: number | null, timedOut }.
+     */
+    queryParameter(ref, timeoutMs = 3000) {
+        return this._query('D' + ref, (line) => {
+            const m = line.match(/\[MSG:INFO: Value is ([^\]]+)\]/i);
+            return m ? parseFloat(m[1]) : undefined;
+        }, timeoutMs);
+    }
+
+    /**
+     * Match reply text against the pending query (queries run one at a time)
+     */
+    handleQueryReply(text) {
+        for (const [, request] of this.pendingRequests) {
+            if (request.kind !== 'query') continue;
+            for (const raw of text.split(/\r?\n/)) {
+                const line = raw.trim();
+                if (!line) continue;
+                const value = request.parseLine(line);
+                if (value !== undefined) { request.finish(value, false); return; }
+                if (/^error:|\[MSG:ERR/i.test(line)) { request.finish(null, false); return; }
+            }
+            return;
+        }
     }
 
     /**

@@ -52,7 +52,91 @@ class Controller {
         this.setupEventListeners();
         this.setupAnimator();
         this.setupSpaceMouse();
+        this.setupMachineConfig();
+        this.loadInputValues();
         this.startRenderLoop();
+    }
+
+    /**
+     * Values the user entered for parameters set outside a parametric file (FluidNC
+     * globals such as #<_tool_radius>). Remembered in localStorage across files and visits.
+     */
+    loadInputValues() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('gcodeInputValues') || 'null');
+            if (saved && typeof saved === 'object') this.parser.inputValues = saved;
+        } catch (e) { /* storage unavailable or corrupt */ }
+    }
+
+    saveInputValues(values) {
+        this.parser.inputValues = values;
+        try { localStorage.setItem('gcodeInputValues', JSON.stringify(values)); } catch (e) { /* storage unavailable */ }
+    }
+
+    /**
+     * Re-expand and redraw the current file, e.g. after entering outside values.
+     * The FluidNC controller overrides this to go through its own loading path.
+     */
+    reloadCurrentGCode() {
+        return this.loadGCodeFromString(this.gcodeText, this.gcodeIdPrefix || '');
+    }
+
+    /**
+     * "Load config.yaml": FluidNC config values (#</axes/x/max_travel_mm> etc.) for
+     * expanding parametric files offline. Remembered in localStorage across visits.
+     * Only pages with the #btn-load-config control (the standalone viewer) use it.
+     */
+    setupMachineConfig() {
+        const button = document.getElementById('btn-load-config');
+        const input = document.getElementById('config-input');
+        const clear = document.getElementById('btn-clear-config');
+        if (!button || !input || typeof parseFluidNCConfig !== 'function') return;
+
+        button.addEventListener('click', () => input.click());
+        input.addEventListener('change', async () => {
+            const file = input.files[0];
+            if (!file) return;
+            const text = await file.text();
+            this.setMachineConfig(text, file.name);
+            try { localStorage.setItem('machineConfig', JSON.stringify({ name: file.name, text })); } catch (e) { /* storage unavailable */ }
+            input.value = '';
+        });
+        if (clear) {
+            clear.addEventListener('click', () => {
+                this.setMachineConfig(null);
+                try { localStorage.removeItem('machineConfig'); } catch (e) { /* storage unavailable */ }
+            });
+        }
+
+        try {
+            const saved = JSON.parse(localStorage.getItem('machineConfig') || 'null');
+            if (saved && saved.text) this.setMachineConfig(saved.text, saved.name, false);
+        } catch (e) { /* storage unavailable or corrupt */ }
+    }
+
+    /**
+     * Use (or, with null, stop using) a FluidNC config.yaml when expanding parametric files
+     * @param {string|null} text - config.yaml contents
+     * @param {string} [name] - file name, shown in the panel and in warnings
+     * @param {boolean} [reload=true] - re-expand the current file so config values take effect
+     */
+    setMachineConfig(text, name, reload = true) {
+        const config = text ? parseFluidNCConfig(text, name) : null;
+        this.parser.machineValues = config;
+
+        const status = document.getElementById('machine-config-status');
+        const clear = document.getElementById('btn-clear-config');
+        if (status) {
+            status.textContent = !config ? 'No machine config loaded'
+                : config.count ? `${name} (${config.count} values)`
+                : `${name} (no numeric settings found)`;
+            status.title = config ? 'Used for #</...> config values in parametric files' : '';
+        }
+        if (clear) clear.classList.toggle('hidden', !config);
+
+        if (reload && this.gcodeText && this.parser.expansion) {
+            this.loadGCodeFromString(this.gcodeText);
+        }
     }
 
     /**
@@ -91,70 +175,78 @@ class Controller {
         if (!gamepads || !gamepads[this.spaceMouseIndex]) return;
         
         const gamepad = gamepads[this.spaceMouseIndex];
-        
-        // SpaceMouse axes (actual mapping for this device):
-        // 0: X translation (pan left/right)
-        // 1: Z translation (zoom in/out)
-        // 2: Y translation (pan up/down)
-        // 3: X rotation (pitch - up/down rotation)
-        // 4: Y rotation (yaw - left/right rotation)
-        // 5: Z rotation (roll)
-        
+
+        // "Object mode": the model follows the cap. Raw 3Dconnexion HID axis order is
+        // X (right), Y (toward you), Z (down), then rotation about each of those:
+        // Rx = tilt toward/away, Ry = tilt left/right (roll), Rz = twist.
+        // If a motion feels reversed on your device, flip its `sign`; if it is on the
+        // wrong control, change its `axis` (set window.spaceMouseDebug = true to log axes).
+        const MAP = {
+            panX:  { axis: 0, sign:  1 },  // push right -> model moves right
+            panY:  { axis: 2, sign:  1 },  // push down  -> model moves down
+            zoom:  { axis: 1, sign:  1 },  // pull toward you -> zoom out
+            tilt:  { axis: 3, sign:  1 },  // tilt toward you -> top of the model tips toward you
+            spin:  { axis: 5, sign: -1 },  // twist clockwise -> model turns clockwise about the screen's vertical
+            roll:  { axis: 4, sign: -1 },  // tilt right -> model rolls clockwise on screen
+        };
+        // Rotations are about the screen axes, as in CAD programs
+
+        // Speeds at full deflection, per second (so they don't depend on the frame rate).
+        // `speed` scales all of them at once.
+        const speed = 1.5;
         const deadzone = 0.05;
-        const panSensitivity = 0.5;
-        const zoomSensitivity = 0.05;     // Increased from 0.0002
-        const rotateSensitivity = 15.0;
-        
-        // Debug: Log all axes that exceed deadzone
-        const activeAxes = [];
-        for (let i = 0; i < gamepad.axes.length; i++) {
-            if (Math.abs(gamepad.axes[i]) > deadzone) {
-                activeAxes.push(`axis${i}=${gamepad.axes[i].toFixed(2)}`);
+        const rotateDegPerSec = 120 * speed;   // spin / tilt
+        const panViewsPerSec = 0.5 * speed;    // fraction of the view height per second
+        const zoomPerSec = 0.7 * speed;        // compounds per frame: e^0.7 ≈ 2x zoom per second
+
+        const now = performance.now();
+        const dt = this.spaceMouseLastPoll ? Math.min((now - this.spaceMouseLastPoll) / 1000, 0.1) : 0;
+        this.spaceMouseLastPoll = now;
+
+        // Rescale past the deadzone, then square (keeping the sign) so light pressure
+        // gives fine control and only a hard push moves fast
+        const read = ({ axis, sign }) => {
+            const v = gamepad.axes[axis];
+            if (v === undefined || Math.abs(v) <= deadzone) return 0;
+            const t = (Math.abs(v) - deadzone) / (1 - deadzone);
+            return Math.sign(v) * sign * t * t;
+        };
+
+        if (window.spaceMouseDebug) {
+            const activeAxes = [];
+            for (let i = 0; i < gamepad.axes.length; i++) {
+                if (Math.abs(gamepad.axes[i]) > deadzone) {
+                    activeAxes.push(`axis${i}=${gamepad.axes[i].toFixed(2)}`);
+                }
+            }
+            if (activeAxes.length > 0) {
+                console.log('SpaceMouse axes:', activeAxes.join(', '));
             }
         }
-        if (activeAxes.length > 0) {
-            console.log('Active axes:', activeAxes.join(', '));
+
+        if (dt === 0) return;
+
+        // pan3D() moves orthoScale * 0.002 per unit and the view is 2 * orthoScale tall,
+        // so one view height is 1000 units
+        const panX = read(MAP.panX), panY = read(MAP.panY);
+        if (panX !== 0 || panY !== 0) {
+            const units = 1000 * panViewsPerSec * dt;
+            this.camera.pan3D(panX * units, panY * units);
         }
-        
-        // Pan left/right (axis 0) and up/down (axis 2)
-        if (gamepad.axes.length >= 3) {
-            const tx = Math.abs(gamepad.axes[0]) > deadzone ? gamepad.axes[0] : 0;
-            const ty = Math.abs(gamepad.axes[2]) > deadzone ? gamepad.axes[2] : 0;
-            
-            if (tx !== 0 || ty !== 0) {
-                this.camera.pan3D(-tx * panSensitivity, -ty * panSensitivity);
-            }
+
+        const zoom = read(MAP.zoom);
+        if (zoom !== 0) {
+            this.camera.zoom3D(zoom * zoomPerSec * dt);
+            this.updateZoomSlider();
         }
-        
-        // Zoom (axis 1)
-        if (gamepad.axes.length >= 2) {
-            const tz = Math.abs(gamepad.axes[1]) > deadzone ? gamepad.axes[1] : 0;
-            if (tz !== 0) {
-                this.camera.zoom3D(tz * zoomSensitivity);
-                this.updateZoomSlider();
-            }
-        }
-        
-        // Rotation: pitch (axis 3) and yaw (axis 4)
-        if (gamepad.axes.length >= 5) {
-            const rx = Math.abs(gamepad.axes[3]) > deadzone ? gamepad.axes[3] : 0;
-            const ry = Math.abs(gamepad.axes[4]) > deadzone ? gamepad.axes[4] : 0;
-            
-            if (rx !== 0 || ry !== 0) {
-                // rx (axis 3) = pitch (up/down orbit) - this is deltaY in rotate()
-                // ry (axis 4) = yaw (left/right orbit) - this is deltaX in rotate()
-                this.camera.rotate(ry * rotateSensitivity, -rx * rotateSensitivity);
-            }
-        }
-        
-        // Rotation roll (tilt camera up vector - not yet implemented)
-        // Would require modifying the view matrix's up vector
-        if (gamepad.axes.length >= 6) {
-            const rz = Math.abs(gamepad.axes[5]) > deadzone ? gamepad.axes[5] : 0;
-            if (rz !== 0) {
-                // TODO: Implement roll by rotating the camera's up vector
-                // This would require adding roll support to the camera class
-            }
+
+        // rotateView() turns the camera, so the model turns the opposite way: the model
+        // tips toward you (+tilt), turns counter-clockwise seen from above (+spin) and
+        // rolls clockwise on screen (+roll)
+        const tilt = read(MAP.tilt), spin = read(MAP.spin), roll = read(MAP.roll);
+        if (tilt !== 0 || spin !== 0 || roll !== 0) {
+            const rad = rotateDegPerSec * Math.PI / 180 * dt;
+            this.camera.rotateView(-tilt * rad, -spin * rad, roll * rad);
         }
     }
 
@@ -356,7 +448,7 @@ class Controller {
                     this.setZoom(absoluteZoom);
                 } else {
                     const absoluteScale = this.camera.initialOrthoScale / relativeZoom;
-                    this.camera.orthoScale = absoluteScale;
+                    this.camera.setOrthoScale(absoluteScale);
                     this.render();
                 }
                 zoomValue.textContent = Math.round(relativeZoom * 100) + '%';
@@ -645,8 +737,10 @@ class Controller {
             if (index < this.segments.length) {
                 const segment = this.segments[index];
                 this.currentPosition = { x: segment.x1, y: segment.y1, z: segment.z1 };
-                this.highlightGCodeLine(segment.lineNum);
-                document.getElementById('current-file-line').textContent = segment.lineNum || '-';
+                this.gcodeCurrentSegmentLine = segment.lineNum;
+                const displayLine = this.toDisplayLine(segment.lineNum);
+                this.highlightGCodeLine(displayLine);
+                document.getElementById('current-file-line').textContent = displayLine || '-';
                 
                 // Update active tool highlighting if tool changed
                 const currentTool = segment.tool || 0;
@@ -854,7 +948,7 @@ class Controller {
     detectTools(segments) {
         const toolSet = new Set();
         for (const seg of segments) {
-            if (seg.type !== 'rapid') {
+            if (seg.type === 'cut') {
                 toolSet.add(seg.tool || 1);
             }
         }
@@ -1022,13 +1116,165 @@ class Controller {
     }
 
     /**
-     * Display GCode text with virtual scrolling for large files
+     * Display GCode text in the GCode panel.
+     * For parametric files (see parser.expansion) this shows the expanded
+     * G-code by default, with a toggle to switch to the original source.
      */
     displayGCode(text, idPrefix = '') {
+        const expansion = this.parser.expansion;
+        this.gcodeExpansion = expansion && expansion.output ? expansion : null;
+        this.gcodeRawText = text;
+        this.gcodeIdPrefix = idPrefix;
+        this.gcodeCurrentSegmentLine = null;
+        if (!this.gcodeViewMode) this.gcodeViewMode = 'expanded';
+
+        this.updateExpansionUI(expansion, idPrefix);
+        this.renderGCodeView();
+    }
+
+    /**
+     * Render the GCode panel for the current view mode (expanded or source)
+     */
+    renderGCodeView() {
+        const exp = this.gcodeExpansion;
+        const showSource = !!exp && this.gcodeViewMode === 'source';
+        const text = !exp ? this.gcodeRawText : (showSource ? exp.sourceText : exp.output);
+        const highlighter = showSource && typeof highlightParametricGCodeLine === 'function'
+            ? highlightParametricGCodeLine
+            : (line) => this.syntaxHighlightGCode(line);
+
+        this.renderGCodeText(text, this.gcodeIdPrefix, highlighter);
+
+        // Keep the current animation position highlighted after switching views
+        if (this.gcodeCurrentSegmentLine) {
+            this.highlightGCodeLine(this.toDisplayLine(this.gcodeCurrentSegmentLine));
+        }
+    }
+
+    /**
+     * Map a segment line number (a line of the parsed/expanded G-code) to the
+     * line shown in the GCode panel. Returns 0 if the line has no source line.
+     */
+    toDisplayLine(lineNum) {
+        const exp = this.gcodeExpansion;
+        if (!exp || this.gcodeViewMode !== 'source') return lineNum;
+        return exp.sourceMap[lineNum - 1] || 0;
+    }
+
+    /**
+     * Show or hide the Expanded/Source toggle and the expansion warnings notice
+     */
+    updateExpansionUI(expansion, idPrefix = '') {
+        const heading = document.querySelector(`#${idPrefix}gcode-panel h3`);
+
+        // Expanded / Source toggle in the panel heading
+        let toggle = document.getElementById(`${idPrefix}gcode-view-toggle`);
+        if (expansion && expansion.output && heading) {
+            if (!toggle) {
+                toggle = document.createElement('span');
+                toggle.id = `${idPrefix}gcode-view-toggle`;
+                toggle.className = 'gcode-view-toggle';
+                toggle.innerHTML =
+                    '<button type="button" data-mode="expanded" title="Show the expanded G-code that is visualized">Expanded</button>' +
+                    '<button type="button" data-mode="source" title="Show the original parametric source">Source</button>';
+                toggle.addEventListener('click', (e) => {
+                    const button = e.target.closest('button[data-mode]');
+                    if (!button || button.dataset.mode === this.gcodeViewMode) return;
+                    this.gcodeViewMode = button.dataset.mode;
+                    this.updateViewToggleButtons();
+                    this.renderGCodeView();
+                });
+                heading.appendChild(toggle);
+            }
+            this.updateViewToggleButtons();
+        } else if (toggle) {
+            toggle.remove();
+        }
+
+        // Warnings / error notice below the heading (or in a host-provided element)
+        let notice = document.getElementById(`${idPrefix}gcode-expand-notice`);
+        const external = (expansion && !expansion.error && expansion.external) || [];
+        const hasProblems = expansion && (expansion.error || expansion.warnings.length > 0);
+        if (!hasProblems && external.length === 0) {
+            if (notice) notice.style.display = 'none';
+            return;
+        }
+        if (!notice) {
+            if (!heading) return;
+            notice = document.createElement('div');
+            notice.id = `${idPrefix}gcode-expand-notice`;
+            notice.className = 'gcode-expand-notice';
+            heading.insertAdjacentElement('afterend', notice);
+        }
+        if (expansion.error) {
+            notice.innerHTML = `⚠️ Could not expand parametric G-code: ${this.escapeHtml(expansion.error)}. Showing the file as-is.`;
+        } else {
+            let html = '';
+            if (external.length > 0) html += this.externalInputsHtml(external);
+            const count = expansion.warnings.length;
+            if (count > 0) {
+                const items = expansion.warnings.map(w => `<li>${this.escapeHtml(w)}</li>`).join('');
+                html += `<details><summary>⚠️ ${count} expansion warning${count === 1 ? '' : 's'}</summary><ul>${items}</ul></details>`;
+            }
+            notice.innerHTML = html;
+            this.bindExternalInputs(notice);
+        }
+        notice.style.display = '';
+    }
+
+    /**
+     * Form for the parameters a file reads but doesn't set (FluidNC globals, numbered
+     * parameters, config values). The values are only used to draw the preview; nothing
+     * is added to the file or the expanded G-code. Opens by itself while any are missing.
+     */
+    externalInputsHtml(external) {
+        const missing = external.filter(p => !p.known).length;
+        const rows = external.map(p => {
+            const value = p.key in this.parser.inputValues ? this.parser.inputValues[p.key] : '';
+            return `<label class="gcode-input-row"><code>${this.escapeHtml(p.display)}</code>` +
+                `<input type="number" step="any" data-key="${this.escapeHtml(p.key)}" value="${value}"></label>`;
+        }).join('');
+        const summary = missing
+            ? `✏️ Enter ${missing} value${missing === 1 ? '' : 's'} set outside this file to preview it`
+            : `✏️ Values set outside this file (${external.length})`;
+        return `<details class="gcode-inputs"${missing ? ' open' : ''}><summary>${summary}</summary>` +
+            `<div class="gcode-inputs-help">Used only for the preview — nothing is added to the G-code.</div>` +
+            `${rows}<button type="button" class="gcode-inputs-apply">Apply</button></details>`;
+    }
+
+    bindExternalInputs(notice) {
+        const form = notice.querySelector('.gcode-inputs');
+        if (!form) return;
+        const apply = () => {
+            const values = { ...this.parser.inputValues };
+            form.querySelectorAll('input[data-key]').forEach(input => {
+                const value = parseFloat(input.value);
+                if (input.value.trim() === '' || isNaN(value)) delete values[input.dataset.key];
+                else values[input.dataset.key] = value;
+            });
+            this.saveInputValues(values);
+            this.reloadCurrentGCode();
+        };
+        form.querySelector('.gcode-inputs-apply').addEventListener('click', apply);
+        form.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input')) apply(); });
+    }
+
+    updateViewToggleButtons() {
+        const toggle = document.getElementById(`${this.gcodeIdPrefix || ''}gcode-view-toggle`);
+        if (!toggle) return;
+        toggle.querySelectorAll('button[data-mode]').forEach(button => {
+            button.classList.toggle('active', button.dataset.mode === this.gcodeViewMode);
+        });
+    }
+
+    /**
+     * Render GCode text with virtual scrolling for large files
+     */
+    renderGCodeText(text, idPrefix = '', highlighter = (line) => this.syntaxHighlightGCode(line)) {
         const container = document.getElementById(`${idPrefix}gcode-container`);
         if (!container) return;
-        
-        const lines = text.split('\n');
+
+        const lines = text.split(/\r?\n/);
         const totalLines = lines.length;
         
         // Store data for virtual scrolling
@@ -1090,7 +1336,7 @@ class Controller {
             const codeHTML = [];
             for (let i = startLine; i < endLine; i++) {
                 const highlight = this.gcodeCurrentHighlight === (i + 1) ? ' highlight' : '';
-                const highlighted = this.syntaxHighlightGCode(lines[i]);
+                const highlighted = highlighter(lines[i]);
                 codeHTML.push(`<div class="gcode-line${highlight}" data-line="${i + 1}">${highlighted || '&nbsp;'}</div>`);
             }
             displayDiv.innerHTML = codeHTML.join('');
@@ -1099,45 +1345,69 @@ class Controller {
         // Store render function for use in highlightGCodeLine
         this.gcodeRenderVisibleLines = renderVisibleLines;
         
+        // Initial render - use requestAnimationFrame and timeout to ensure container has dimensions
+        renderVisibleLines(true);
+        requestAnimationFrame(() => renderVisibleLines(true));
+        setTimeout(() => renderVisibleLines(true), 100);
+
+        // Container listeners are bound once and survive re-renders (new files, view toggles)
+        if (container.dataset.gcodeListenersBound) return;
+        container.dataset.gcodeListenersBound = 'true';
+
         // Scroll event with requestAnimationFrame for smooth performance
         let ticking = false;
         container.addEventListener('scroll', () => {
             if (!ticking) {
                 requestAnimationFrame(() => {
-                    renderVisibleLines();
+                    if (this.gcodeRenderVisibleLines) this.gcodeRenderVisibleLines();
                     ticking = false;
                 });
                 ticking = true;
             }
         }, { passive: true });
-        
-        // Initial render - use requestAnimationFrame and timeout to ensure container has dimensions
-        renderVisibleLines(true);
-        requestAnimationFrame(() => renderVisibleLines(true));
-        setTimeout(() => renderVisibleLines(true), 100);
-        
+
         // Click handler with event delegation
         container.addEventListener('click', (e) => {
             const lineDiv = e.target.closest('.gcode-line');
             if (!lineDiv) return;
-            
+
             const lineNumber = parseInt(lineDiv.dataset.line);
             if (!lineNumber) return;
-            
-            const segmentIndex = this.segments.findIndex(seg => seg.lineNum >= lineNumber);
-            if (segmentIndex !== -1) {
-                this.animator.currentIndex = segmentIndex;
-                this.animator.onUpdate(segmentIndex);
-                
-                if (this.currentView === '2d') {
-                    this.renderer2d.render();
-                } else {
-                    this.renderer3d.render();
-                }
-                
-                this.highlightGCodeLine(lineNumber);
-            }
+
+            this.handleGCodeLineClick(lineNumber);
         });
+    }
+
+    /**
+     * Jump the animation to the segment for a clicked line in the GCode panel
+     */
+    handleGCodeLineClick(lineNumber) {
+        const exp = this.gcodeExpansion;
+        let segmentIndex;
+
+        if (exp && this.gcodeViewMode === 'source') {
+            // A source line inside a loop produces many segments (and a skipped branch none):
+            // jump to the next one after the current position, wrapping around to the start
+            const fromSource = (seg) => exp.sourceMap[seg.lineNum - 1] === lineNumber;
+            const current = this.animator.currentIndex;
+            segmentIndex = this.segments.findIndex((seg, i) => i > current && fromSource(seg));
+            if (segmentIndex === -1) segmentIndex = this.segments.findIndex(fromSource);
+        } else {
+            segmentIndex = this.segments.findIndex(seg => seg.lineNum >= lineNumber);
+        }
+
+        if (segmentIndex === -1) return;
+
+        this.animator.currentIndex = segmentIndex;
+        this.animator.onUpdate(segmentIndex);
+
+        if (this.currentView === '2d') {
+            this.renderer2d.render();
+        } else {
+            this.renderer3d.render();
+        }
+
+        this.highlightGCodeLine(lineNumber);
     }
     
     /**
@@ -1337,7 +1607,7 @@ class Controller {
         } else {
             // For 3D, adjust ortho scale
             const baseScale = 100; // Base scale when zoom = 1
-            this.camera.orthoScale = baseScale / zoom;
+            this.camera.orthoScale = this.camera.targetOrthoScale = baseScale / zoom;
         }
     }
 
@@ -1376,7 +1646,7 @@ class Controller {
             relativeZoom = this.camera.zoom2d / this.camera.initialZoom2d;
         } else {
             // Relative to initial orthoScale (smaller orthoScale = more zoomed in)
-            relativeZoom = this.camera.initialOrthoScale / this.camera.orthoScale;
+            relativeZoom = this.camera.initialOrthoScale / this.camera.targetOrthoScale;
         }
         
         slider.value = relativeZoom;

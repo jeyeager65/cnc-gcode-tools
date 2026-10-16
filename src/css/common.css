@@ -23,6 +23,16 @@
     --gcode-x-axis: #1976d2;
     --gcode-y-axis: #388e3c;
     --gcode-z-axis: #7b1fa2;
+    /* Parametric G-code tokens */
+    --gcode-variable: #e65100;
+    --gcode-keyword: #0d47a1;
+    --gcode-function: #6a1b9a;
+    --gcode-operator: #b71c1c;
+    --gcode-bracket: #e65100;
+    --gcode-oword: #1565c0;
+    --gcode-number: #795548;
+    --notice-warning-bg: #fff4e5;
+    --notice-warning-text: #8a4b00;
 }
 
 :root[data-theme="dark"] {
@@ -49,6 +59,16 @@
     --gcode-x-axis: #42a5f5;
     --gcode-y-axis: #66bb6a;
     --gcode-z-axis: #ba68c8;
+    /* Parametric G-code tokens */
+    --gcode-variable: #ffb74d;
+    --gcode-keyword: #90caf9;
+    --gcode-function: #ce93d8;
+    --gcode-operator: #ef9a9a;
+    --gcode-bracket: #ffcc80;
+    --gcode-oword: #90caf9;
+    --gcode-number: #bcaaa4;
+    --notice-warning-bg: #3a2a12;
+    --notice-warning-text: #ffcc80;
 }
 
 /* Scrollbar styling for dark mode */
@@ -344,6 +364,112 @@ canvas:active {
 .gcode-x-axis { color: var(--gcode-x-axis); font-weight: 500; }
 .gcode-y-axis { color: var(--gcode-y-axis); font-weight: 500; }
 .gcode-z-axis { color: var(--gcode-z-axis); font-weight: 500; }
+.gcode-variable { color: var(--gcode-variable); font-style: italic; }
+.gcode-keyword { color: var(--gcode-keyword); font-weight: bold; }
+.gcode-oword { color: var(--gcode-oword); font-weight: bold; }
+.gcode-function { color: var(--gcode-function); font-weight: bold; }
+.gcode-operator { color: var(--gcode-operator); }
+.gcode-bracket { color: var(--gcode-bracket); font-weight: bold; }
+.gcode-number { color: var(--gcode-number); }
+
+/* FluidNC config.yaml for parametric previews (standalone viewer) */
+.machine-config {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 12px;
+}
+
+.machine-config button {
+    padding: 4px 10px;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+#machine-config-status {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    opacity: 0.75;
+}
+
+/* Expanded / Source toggle for parametric files */
+.gcode-view-toggle {
+    display: inline-flex;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.gcode-view-toggle button {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: normal;
+    border-radius: 0;
+}
+
+.gcode-view-toggle button:first-child { border-radius: 4px 0 0 4px; }
+.gcode-view-toggle button:last-child { border-radius: 0 4px 4px 0; }
+
+.gcode-view-toggle button.active {
+    background-color: var(--button-active);
+    color: #ffffff;
+}
+
+/* Expansion warnings / errors for parametric files */
+.gcode-expand-notice {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    background-color: var(--notice-warning-bg);
+    color: var(--notice-warning-text);
+}
+
+.gcode-expand-notice summary {
+    cursor: pointer;
+}
+
+.gcode-expand-notice ul {
+    margin: 6px 0 0 0;
+    padding-left: 18px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+/* Values for parameters set outside a parametric file */
+.gcode-inputs + details {
+    margin-top: 6px;
+}
+
+.gcode-inputs-help {
+    margin: 4px 0 6px 0;
+    opacity: 0.8;
+}
+
+.gcode-input-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.gcode-input-row code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gcode-input-row input {
+    width: 90px;
+    flex-shrink: 0;
+}
+
+.gcode-inputs-apply {
+    margin-top: 2px;
+}
 
 .gcode-hidden {
     display: none !important;
