@@ -644,9 +644,10 @@ class FluidNCController extends Controller {
         const state = this.tools.get(seg.tool || 1);
         const toolEl = document.getElementById('run-tool');
         if (toolEl) {
-            const name = state ? this.shortToolName(state.name, seg.tool || 1) : '';
+            const number = state && state.number !== undefined ? state.number : (seg.tool || 1);
+            const name = state ? this.shortToolName(state.name, number) : '';
             const held = this.machineState === 'Hold' || this.machineState === 'Door';
-            toolEl.textContent = (held ? 'On hold · ' : '') + `T${seg.tool || 1}${name ? ' ' + name : ''}`;
+            toolEl.textContent = (held ? 'On hold · ' : '') + `T${number}${name ? ' ' + name : ''}`;
         }
         const sub = document.getElementById('run-sub');
         if (sub) {

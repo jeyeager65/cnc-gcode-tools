@@ -305,6 +305,9 @@ New-Item -Path "dist/.nojekyll" -ItemType File -Force | Out-Null
 Write-Host "Copying index.html landing page for GitHub Pages..." -ForegroundColor Cyan
 Copy-Item -Path "src/index.html" -Destination "dist/index.html"
 Copy-Item -Path "docs/viewer-desktop.png", "docs/viewer-phone.png" -Destination "dist"
+# Demo files for gcodeviewer.html?demo (and its "Try the demo file" button)
+New-Item -ItemType Directory -Force -Path "dist/demo" | Out-Null
+Copy-Item -Path "examples/viewer-demo/*.nc" -Destination "dist/demo"
 
 # Package the VS Code extension (.vsix) for "Install from VSIX..."
 # It is staged under dist/ so the viewer files it needs from src/ can be added

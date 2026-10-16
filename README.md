@@ -36,6 +36,7 @@ A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL C
 
 ### Hosted Version
 Visit the hosted version: [CNC GCode Tools](https://jeyeager65.github.io/cnc-gcode-tools/)
+Try it with the demo job: [gcodeviewer.html?demo](https://jeyeager65.github.io/cnc-gcode-tools/gcodeviewer.html?demo), a board with one feature per bit type (flat, bull nose, ball, V-bit, drill, chamfer, tapered ball), probing and M0 bit changes, from the FreeCAD FluidNC post. `?demo=ViewerDemo_T4_vbit.nc` opens one bit's file, which picks up the cuts of the bits before it.
 
 ### Local Usage
 1. Download `gcodeviewer.html` from the [latest release](https://github.com/jeyeager65/cnc-gcode-tools/releases/latest)
@@ -225,6 +226,7 @@ cnc-gcode-tools/
 │   ├── parametric_bolt_circle.nc # Parametric GCode demo
 │   ├── modal_test.nc             # Modal G0/G1/G2/G3 demo
 │   ├── stock_sim_demo.nc         # Stock simulation demo (header with stock and tool sizes)
+│   ├── viewer-demo/              # Demo job from the FreeCAD FluidNC post: 7 bit types, probing, M0s; all-in-one and one file per bit (PriorJob)
 │   └── *-font.json               # Sample Font Creator fonts
 ├── docs/                         # README screenshots
 ├── dist/                         # Build output (generated)

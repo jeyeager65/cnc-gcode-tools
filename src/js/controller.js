@@ -116,6 +116,49 @@ class Controller {
 
         window.addEventListener('keydown', (e) => this.handleShortcut(e));
         this.renderRecentFiles();
+        this.setupDemo();
+    }
+
+    /**
+     * The demo files (the build copies examples/viewer-demo to demo/ beside the page).
+     * gcodeviewer.html?demo opens the whole job, ?demo=ViewerDemo_T4_vbit.nc one bit's
+     * file, which builds on the earlier ones. Only over http(s): a page opened as a file
+     * can't fetch them.
+     */
+    setupDemo() {
+        if (!/^https?:$/.test(location.protocol) || !document.getElementById('upload-zone')) return;
+        const empty = document.querySelector('#vw-empty');
+        if (empty && !empty.querySelector('[data-action="demo"]')) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'vw-btn';
+            button.dataset.action = 'demo';
+            button.textContent = 'Try the demo file';
+            button.addEventListener('click', () => this.loadDemo());
+            empty.appendChild(button);
+        }
+        const demo = new URLSearchParams(location.search).get('demo');
+        if (demo !== null) this.loadDemo(demo || undefined);
+    }
+
+    async loadDemo(name = 'ViewerDemo_ALL.nc') {
+        await this.loadFromURL('demo/' + name.split(/[\\/]/).pop());
+    }
+
+    /**
+     * Open a G-code file from a URL. Earlier jobs (PriorJob) are read from the same folder.
+     */
+    async loadFromURL(url) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            const name = decodeURIComponent(url.split('/').pop());
+            await this.loadFile(new File([text], name, { type: 'text/plain' }), new URL('.', new URL(url, location.href)).href);
+        } catch (e) {
+            console.error('Could not open', url, e);
+            alert(`Could not open ${url}: ${e.message}`);
+        }
     }
 
     /**
@@ -1345,7 +1388,7 @@ class Controller {
                 const tool = seg.tool || 1;
                 if (lastTool !== null && tool !== lastTool) {
                     const state = this.tools.get(tool);
-                    html += `<span class="vw-mark" style="left:${(i / n * 100).toFixed(2)}%;background:${state ? state.color : '#999'}" title="Tool change: T${tool}"></span>`;
+                    html += `<span class="vw-mark" style="left:${(i / n * 100).toFixed(2)}%;background:${state ? state.color : '#999'}" title="Tool change: T${state && state.number !== undefined ? state.number : tool}"></span>`;
                 }
                 lastTool = tool;
             });
@@ -1399,18 +1442,20 @@ class Controller {
     /**
      * Load GCode file
      */
-    async loadFile(file) {
+    async loadFile(file, folderURL = null) {
         const progressBar = document.getElementById('progress-bar');
         const progressFill = document.getElementById('progress-fill');
 
         progressBar.classList.remove('hidden');
         progressFill.style.width = '0%';
+        // Earlier jobs of a file opened from a URL come from its folder (readPriorJob)
+        this.fileFolderURL = folderURL;
 
         try {
             // Read file text for display
             const text = await file.text();
             this.gcodeText = text;
-            if (this.ui) this.rememberRecentFile(file.name, text);
+            if (this.ui && !folderURL) this.rememberRecentFile(file.name, text);
             
             const segments = await this.parser.parseFile(file, (percent) => {
                 progressFill.style.width = percent + '%';
@@ -1600,11 +1645,14 @@ class Controller {
         const toolSet = new Set();
         // A ToolDef NAME= (stock simulation header) replaces the tool list's name
         const defNames = new Map();
+        // The T number each tool list entry cuts with (the key is the parser's tool index)
+        const numbers = new Map();
         const defs = this.parser.simMeta ? this.parser.simMeta.tools : new Map();
         for (const seg of segments) {
             if (seg.type === 'cut') {
                 const key = seg.tool || 1;
                 toolSet.add(key);
+                if (!numbers.has(key) && seg.toolNumber !== undefined && seg.toolNumber !== null) numbers.set(key, seg.toolNumber);
                 const def = defs.get(seg.toolNumber);
                 if (def && def.name && !defNames.has(key)) defNames.set(key, def.name);
             }
@@ -1629,7 +1677,8 @@ class Controller {
             this.tools.set(tool, {
                 visible: true,
                 color: customColor || defaultColor,
-                name: defNames.get(tool) || toolNames[toolIndex] || `Tool ${tool}`
+                name: defNames.get(tool) || toolNames[toolIndex] || `Tool ${tool}`,
+                number: numbers.has(tool) ? numbers.get(tool) : tool
             });
         }
     }
@@ -1713,14 +1762,17 @@ class Controller {
         const times = this.animator.segmentMoveTimes;
         if (times) this.segments.forEach((seg, i) => { if (seg.type === 'rapid') rapidTime += times[i] || 0; });
 
-        const rows = [...this.tools].map(([num, state]) => `
-            <label class="vw-tool tool-item" data-tool="${num}">
-                <input type="checkbox" data-role="visible"${state.visible ? ' checked' : ''} aria-label="Show T${num}">
-                <input type="color" class="vw-swatch" data-role="color" value="${esc(state.color)}" aria-label="Color for T${num}">
-                <span class="vw-tool-id">T${num}</span>
-                <span class="vw-tool-name" title="${esc(state.name || '')}">${esc(this.shortToolName(state.name, num))}</span>
-                <span class="vw-tool-time">${clock(this.animator.toolTimes.get(num) || 0)}</span>
-            </label>`);
+        const rows = [...this.tools].map(([key, state]) => {
+            const t = state.number !== undefined ? state.number : key;
+            return `
+            <label class="vw-tool tool-item" data-tool="${key}">
+                <input type="checkbox" data-role="visible"${state.visible ? ' checked' : ''} aria-label="Show T${t}">
+                <input type="color" class="vw-swatch" data-role="color" value="${esc(state.color)}" aria-label="Color for T${t}">
+                <span class="vw-tool-id">T${t}</span>
+                <span class="vw-tool-name" title="${esc(state.name || '')}">${esc(this.shortToolName(state.name, t))}</span>
+                <span class="vw-tool-time">${clock(this.animator.toolTimes.get(key) || 0)}</span>
+            </label>`;
+        });
         rows.push(`
             <label class="vw-tool vw-tool-rapid">
                 <input type="checkbox" id="rapid-moves-visible"${this.rapidMovesVisible ? ' checked' : ''} aria-label="Show rapid moves">
@@ -1889,7 +1941,10 @@ class Controller {
      * the SD card, the VS Code extension the file's folder). Returns the text or null.
      */
     async readPriorJob(name) {
-        return null;
+        // A file opened from a URL (the demo): its folder
+        if (!this.fileFolderURL) return null;
+        const response = await fetch(this.fileFolderURL + encodeURIComponent(name.split(/[\\/]/).pop()));
+        return response.ok ? response.text() : null;
     }
 
     async autoLoadPriorJobs() {
