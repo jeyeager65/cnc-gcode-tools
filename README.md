@@ -60,23 +60,30 @@ See [figui-plugin/README.md](figui-plugin/README.md).
 
 ### Embedded Device Deployment (ESP32/FluidNC)
 
-#### Upload to Device
+The extension is about 68 KB gzipped. **Install it on the SD card, not the controller's flash:** the
+local flash filesystem is small and already holds the WebUI and `config.yaml`.
+
+#### 1. Copy it to the SD card
+Put `gcodeviewer.html.gz` in the card's root folder: with the WebUI's file manager (SD card), with a
+card reader, or over FluidNC's WebDAV:
 ```bash
-# Download the FluidNC-optimized gzipped file
+# Download the FluidNC build
 curl -LO https://github.com/jeyeager65/cnc-gcode-tools/releases/latest/download/gcodeviewer.html.gz
 
-# Upload to FluidNC via web interface
-curl -F "file=@gcodeviewer.html.gz" http://your-device-ip/files
+# Upload it to the SD card
+curl -T gcodeviewer.html.gz http://your-device-ip/sd/gcodeviewer.html.gz
 ```
 
-#### Add it to the WebUI
-FluidNC serves gzipped files, so the file is `/gcodeviewer.html` on the controller. Add it to WebUI v3 as an extension panel with that page as its source. It talks to the machine through the WebUI, so opened on its own (`http://your-device-ip/gcodeviewer.html`) it can't list the SD card or follow a job.
+#### 2. Add it to the WebUI
+In WebUI v3, add an extension panel whose source is `/sd/gcodeviewer.html`. FluidNC sends the `.gz`
+for it. The extension talks to the machine through the WebUI, so opened on its own in a browser it
+can't list the SD card or follow a job.
 
 The FluidNC version includes:
 - SD card file browser with folder navigation, **Preview** and **Run on machine**
 - Following a running job: the view shows where the machine is, with progress, time left, time to the next M0 and a feed hold / resume button, whether the job was started here or elsewhere
 - A phone layout, as the WebUI is often used on one
-- Optimized for space-constrained devices
+- One gzipped file, kept on the SD card
 
 ## 📊 File Sizes
 
