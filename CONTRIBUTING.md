@@ -22,8 +22,8 @@ Thank you for your interest in contributing to CNC GCode Viewer! This document p
 ### 1. Fork and Clone
 ```bash
 # Fork the repository on GitHub
-git clone https://github.com/jeyeager65/cnc-gcode-viewer.git
-cd cnc-gcode-viewer
+git clone https://github.com/jeyeager65/cnc-gcode-tools.git
+cd cnc-gcode-tools
 ```
 
 ### 2. Create a Branch

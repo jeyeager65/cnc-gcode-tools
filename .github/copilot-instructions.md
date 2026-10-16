@@ -166,7 +166,7 @@ class FluidNCController extends Controller {
     }
 }
 ```
-Instantiate `FluidNCController` instead of `Controller` in `fluidnc.html`.
+Instantiate `FluidNCController` instead of `Controller` in `gcodeviewer-fluidnc.html`.
 
 **Predictive Animation System:**
 During file execution, FluidNC provides progress updates every 200-500ms. To achieve smooth 60fps animation:
