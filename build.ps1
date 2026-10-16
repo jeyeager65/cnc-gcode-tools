@@ -38,6 +38,8 @@ $builds = @(
         OutputName = "gcodeviewer"
         DeleteHtmlAfterGzip = $true
         JsFiles = @(
+            "src/js/prefs.js",
+            "src/js/viewer-ui.js",
             "src/js/fluidnc-api.js",
             "src/js/gcode-expander.js",
             "src/js/parser.js",
@@ -50,6 +52,8 @@ $builds = @(
             "src/js/fluidnc-controller.js"
         )
         ScriptTags = @"
+    <script src="js/prefs.js"></script>
+    <script src="js/viewer-ui.js"></script>
     <script src="js/fluidnc-api.js"></script>
     <script src="js/gcode-expander.js"></script>
     <script src="js/parser.js"></script>
@@ -68,6 +72,8 @@ $builds = @(
         OutputName = "gcodeviewer"
         SkipGzip = $true
         JsFiles = @(
+            "src/js/prefs.js",
+            "src/js/viewer-ui.js",
             "src/js/gcode-expander.js",
             "src/js/parser.js",
             "src/js/camera.js",
@@ -78,6 +84,8 @@ $builds = @(
             "src/js/controller.js"
         )
         ScriptTags = @"
+    <script src="js/prefs.js"></script>
+    <script src="js/viewer-ui.js"></script>
     <script src="js/gcode-expander.js"></script>
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
@@ -94,6 +102,7 @@ $builds = @(
         OutputName = "fontcreator"
         SkipGzip = $true
         JsFiles = @(
+            "src/js/prefs.js",
             "src/js/parser.js",
             "src/js/camera.js",
             "src/js/renderer2d.js",
@@ -104,6 +113,7 @@ $builds = @(
             "src/js/font-creator-app.js"
         )
         ScriptTags = @"
+    <script src="js/prefs.js"></script>
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
     <script src="js/renderer2d.js"></script>
@@ -143,7 +153,7 @@ foreach ($build in $builds) {
     Write-Host "Inlining CSS..." -ForegroundColor Cyan
     
     # Use custom CSS files if specified, otherwise default to common.css and fluidnc.css
-    $cssFiles = if ($build.CssFiles) { $build.CssFiles } else { @("src/css/common.css", "src/css/fluidnc.css") }
+    $cssFiles = if ($build.CssFiles) { $build.CssFiles } else { @("src/css/common.css", "src/css/viewer.css", "src/css/fluidnc.css") }
     
     foreach ($cssFile in $cssFiles) {
         if (Test-Path $cssFile) {
@@ -269,10 +279,10 @@ Copy-Item -Path "vscode-extension" -Destination $extStage -Recurse
 # The viewer webview and the expander load these from viewer/ (same list as install-vscode-extension.ps1)
 $viewerDir = "$extStage/viewer"
 New-Item -ItemType Directory -Force -Path $viewerDir | Out-Null
-"gcode-expander.js", "parser.js", "camera.js", "renderer2d.js", "stock-sim.js", "renderer3d.js", "animator.js", "controller.js" | ForEach-Object {
+"prefs.js", "viewer-ui.js", "gcode-expander.js", "parser.js", "camera.js", "renderer2d.js", "stock-sim.js", "renderer3d.js", "animator.js", "controller.js" | ForEach-Object {
     Copy-Item "src/js/$_" $viewerDir
 }
-Copy-Item "src/css/common.css" $viewerDir
+"common.css", "viewer.css" | ForEach-Object { Copy-Item "src/css/$_" $viewerDir }
 
 $extManifest = Get-Content "$extStage/package.json" -Raw | ConvertFrom-Json
 $vsixName = "cnc-gcode-tools-$($extManifest.version).vsix"

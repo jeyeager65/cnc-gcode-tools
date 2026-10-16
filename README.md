@@ -2,7 +2,7 @@
 
 ![Version](https://img.shields.io/github/v/release/jeyeager65/cnc-gcode-tools?style=flat-square)
 ![License](https://img.shields.io/github/license/jeyeager65/cnc-gcode-tools?style=flat-square)
-![Size](https://img.shields.io/badge/size-~28--35KB%20gzipped-blue?style=flat-square)
+![Size](https://img.shields.io/badge/size-~60--68KB%20gzipped-blue?style=flat-square)
 
 A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL CNC machines. Features both 2D and 3D visualization modes, layer-by-layer animation, multi-tool support, and runs entirely client-side on embedded devices with limited storage.
 
@@ -63,17 +63,17 @@ curl -F "file=@gcodeviewer.html.gz" http://your-device-ip/files
 FluidNC automatically serves gzipped files. Access at: `http://your-device-ip/gcodeviewer.html`
 
 The FluidNC version includes:
-- Integrated SD card file browser
-- Breadcrumb navigation for folders
-- Direct file preview from SD card
+- SD card file browser with folder navigation, **Preview** and **Run on machine**
+- Following a running job: the view shows where the machine is, with progress, time left, time to the next M0 and a feed hold / resume button, whether the job was started here or elsewhere
+- A phone layout, as the WebUI is often used on one
 - Optimized for space-constrained devices
 
 ## 📊 File Sizes
 
 | Version | Minified | Gzipped | Use Case |
 |---------|----------|---------|----------|
-| **Standalone** | ~98KB | **~28KB** | Local use, feature-complete |
-| **FluidNC** | ~127KB | **~35KB** | FluidNC WebUI v3 Extension with SD card browser |
+| **Standalone** | ~221KB | **~60KB** | Local use, feature-complete |
+| **FluidNC** | ~248KB | **~68KB** | FluidNC WebUI v3 Extension with SD card browser |
 
 Both versions include:
 - All visualization features (2D/3D)
@@ -84,64 +84,65 @@ Both versions include:
 
 ## 🎮 Usage Guide
 
+### Layout
+- **Header:** the loaded file (click it for the file menu), and the theme button.
+- **G-code** (left): the program, following the animation. Click a line to jump there. Hide it with the arrow at its top right and bring it back with **G-code** on the view's toolbar; it starts hidden on narrower windows and in VS Code.
+- **View** (middle): opens in 3D. The toolbar at the top right has **2D / 3D**, **Fit** and the view settings (grid size, axes, tool marker, zoom, theme); **+ / −** zoom at the bottom right. The transport bar under the view plays the job.
+- **Sidebar** (right): a one-line summary (time, segments, tools, X/Y/Z ranges), **Toolpaths**, **Stock simulation** and **Warnings**. Sections fold, and stay as you leave them.
+- **Phone** (820 px wide and narrower): one pane at a time, chosen with the tab bar at the bottom: **Files**, **View**, **Job** and **G-code**. Menus open as sheets from the bottom.
+
 ### Loading Files
 
 **Standalone Version:**
-- **Drag & Drop**: Drag GCode files onto the upload zone
-- **Browse**: Click the upload zone to select files
+- **Drag & Drop**: drop a GCode file anywhere on the page
+- **Browse**: **Open…** in the header, or **Choose file…** in the file menu
+- **Recent**: the file menu lists the last six files opened (kept in the browser, up to 25 MB each), to open again with one click
+- **config.yaml**: the header's config button loads a FluidNC `config.yaml` for parametric files and the bed size
 
 **FluidNC Version:**
-- Browse SD card files in the file browser
-- Navigate folders using breadcrumb navigation
-- Click **Preview** to visualize the toolpath
-- Click **Run** to execute the file on your CNC
+- Browse the SD card in the file menu (the **Files** tab on a phone)
+- Navigate folders with the path at the top
+- Click **Preview** (or double-click a file) to visualize the toolpath
+- Click **Run on machine** to run the file on your CNC; the view then follows the job
 
-### Tool Controls
-- **Multi-Tool Jobs**: Each tool (T1, T2, etc.) gets its own color
-- **Visibility Toggle**: Click tool checkboxes to show/hide specific tools. In the stock simulation, a hidden tool's cuts are left out too
-- **Color Picker**: Click color swatches to customize tool colors
-
-### Rapid Moves (G0)
-- **Visibility Toggle**: Show/hide rapid positioning moves
-- **Color Control**: Customize the color of travel moves
-- Useful for focusing on cutting paths only
+### Toolpaths
+- **Multi-Tool Jobs**: each tool (T1, T2, etc.) gets its own color, with its estimated time. The tool cutting at the animation's position is outlined
+- **Visibility**: the checkboxes show or hide each tool's paths, and the **Rapids** row the G0 travel moves. In the stock simulation, a hidden tool's cuts are left out too
+- **Color**: click a color swatch to change it
+- **Z layers**: the slider below the list shows only paths between two heights
 
 ### 2D View Controls
 - **Pan**: Click and drag
-- **Zoom**: Mouse wheel (zooms to cursor position)
-- **Reset**: Double-click to fit view to bounds
+- **Zoom**: Mouse wheel (zooms to cursor position), or **+ / −**
+- **Reset**: **Fit**, or double-click
 
 ### 3D View Controls
-The 3D view opens, and Reset View returns, at an angle from the front-right, 35° above the work, so depth shows.
+The 3D view opens, and Fit returns, at an angle from the front-right, 35° above the work, so depth shows.
 - **Rotate**: Click and drag to orbit camera
-- **Pan**: Shift + drag to translate view
-- **Zoom**: Mouse wheel to adjust distance
-- **Reset**: Double-click to fit and center
+- **Pan**: Right-click and drag
+- **Zoom**: Mouse wheel, or **+ / −**
+- **Reset**: **Fit**, or double-click
 
 ### Touch Controls
 - **Pan/Rotate**: Single finger drag
 - **Zoom**: Pinch to zoom
 - **Pan 3D**: Two-finger drag (while in 3D mode)
 
-### Animation Controls
-- **Play/Pause**: Start or stop toolpath playback
-- **Reset**: Return to beginning
-- **Next/Prev**: Step through line-by-line
-- **Speed**: 1x is real time. Each move takes its estimated time from its feed rate, the rapid rates and acceleration, so slow moves such as probing look slow. The slider goes from 0.1x to 500x
+### Transport Bar
+- **Play/Pause**, **Back to start** and **Step back / forward**
+- **Scrub bar**: drag to any point in the job. Colored ticks mark tool changes and diamonds the M0 pauses. Below it: time on the timeline, segment and file line
+- **Speed**: 1x is real time. Each move takes its estimated time from its feed rate, the rapid rates and acceleration, so slow moves such as probing look slow. The menu goes from 0.1x to 500x. The summary's total also allows time for tool changes (30 s at an M0, 10 s at an M6), which the timeline doesn't play
+- **Playback settings** (⚙): messages, M0 stops and the probe close-up (below)
+- **Keyboard**: <kbd>Space</kbd> play / pause, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Home</kbd> / <kbd>End</kbd> start and end, <kbd>[</kbd> <kbd>]</kbd> slower / faster, <kbd>V</kbd> 2D / 3D
 
 ### Messages, M0 Pauses and Probing
 While the animation runs, the viewer shows what a controller UI such as FluidTouch or the WebUI would show, using FluidNC's rules:
 - **Messages:** `(MSG, …)` comments (`MSG` is case-sensitive) and `(PRINT, …)` comments, with `#parameters` filled in using `%d`, `%f` or `%.Nf` formats. They appear in a small console at the bottom of the view. `DEBUG` messages only show at FluidNC's debug log level, so they're left out.
-- **M0 pauses:** with **Stop at M0 pauses** on (under Animation), playback stops at each `M0` and shows its prompt with the last message, until you click **Resume** or **Play**. `M1` is ignored, as FluidNC ignores it, and `M2`/`M30` end the program.
+- **M0 pauses:** with **Stop at M0 pauses** on (in the playback settings), playback stops at each `M0` and shows its prompt with the last message, until you click **Resume** or **Play**. `M1` is ignored, as FluidNC ignores it, and `M2`/`M30` end the program.
 - **Probing:** when the stock is known from a `Stock` header, a `G38.2`/`G38.3` straight down in Z stops where it touches, instead of running to its programmed end. It touches the stock as cut so far, or a touch plate of thickness `P` lying on it. With a `P` word the work Z is then set so the contact point reads `P`, as FluidNC does, so probing over an area that's already been cut shows up as cuts that go too deep. `G38.2` with nothing to touch is reported as a probe-fail alarm. The probe plays at its feed rate onto a touch plate drawn under the bit, which turns green on contact and stays until the next M0 (usually "remove the probe"). With **Close-up on probing** on, playback moves the 3D view in close on each probe and back afterwards. The probe's starting height isn't known (it's usually jogged by hand), so a plate above the start is probed from 5 mm (0.2 in) above it. Cuts from earlier jobs (`PriorJob`) aren't considered when probing.
 
-### Layer Filter
-- **Min Z**: Set minimum Z-height to display
-- **Max Z**: Set maximum Z-height to display
-- Useful for isolating specific layers in multi-layer jobs
-
 ### Stock Simulation
-The **Stock Simulation** panel shows the machined stock as a solid in the 3D view. It carves the stock with each tool's shape and keeps pace with the animation, so stepping or scrubbing shows the part at that point in the job. The current position is drawn as the tool itself, to scale.
+The **Stock simulation** section shows the machined stock as a solid in the 3D view. It's on (**Show**) whenever the file describes its stock and tools. It carves the stock with each tool's shape and keeps pace with the animation, so stepping or scrubbing shows the part at that point in the job. The current position is drawn as the tool itself, to scale.
 
 It needs the size of the stock and of every tool that cuts. A post processor can write these into the file header:
 
@@ -161,13 +162,13 @@ It needs the size of the stock and of every tool that cuts. A post processor can
 - `CNCSIM` is optional. All sizes are in the file's units (G20/G21).
 - For a job split into files that build on each other (one per bit, say), each file lists the files that run before it with `(PriorJob: <file name>)`, oldest first. Their cuts are made first. VS Code and the FluidNC extension read them from the same folder; in the standalone viewer, choose them under **Earlier jobs** with **Add files…**.
 
-For files without these comments, the panel estimates the stock from the toolpaths and guesses tool sizes from names like `1/4" flat end mill` or `6mm ball nose`. Check or enter the values under **Stock and tools**, then click **Apply**. **Detail** sets the grid resolution. **Auto** sizes the cells to about 1/8 of the smallest tool's cutting feature (a tapered ball's tip, half a V-bit, otherwise the diameter), using 1 to 6 million cells. Draft, Normal, Fine and Ultra use 0.5, 2, 5 and 10 million cells. Finer grids show small details more accurately, but use more memory and take longer to carve.
+For files without these comments, the panel estimates the stock from the toolpaths and guesses tool sizes from names like `1/4" flat end mill` or `6mm ball nose`. Check or enter the values under **Stock and tool sizes**, then click **Apply**. **Detail** sets the grid resolution. **Auto** sizes the cells to about 1/8 of the smallest tool's cutting feature (a tapered ball's tip, half a V-bit, otherwise the diameter), using 1 to 6 million cells. Draft, Normal, Fine and Ultra use 0.5, 2, 5 and 10 million cells. Finer grids show small details more accurately, but use more memory and take longer to carve.
 
 With **Current layer only** on (under "Show toolpaths on the stock"), the animation only draws the toolpaths of the layer being cut, from where the tool started that Z level. Earlier layers are already visible in the stock.
 
 While the stock is shown, Reset View and double-click frame the whole stock. The 3D grid stands for the machine bed. It's sized from the machine's max travel (read from the connected machine in the FluidNC extension, or from a loaded `config.yaml`), or else made a little larger than the stock. A size you type in yourself is kept.
 
-Rapid (G0) moves that cut into the stock are listed as warnings. A machine with a vertical tool can't cut undercuts, so the top surface describes the part fully. Accuracy is limited by the grid: the cell size is shown in the panel.
+Rapid (G0) moves that cut into the stock, and cuts deeper than a tool's flute length, are listed under **Warnings**. A machine with a vertical tool can't cut undercuts, so the top surface describes the part fully. Accuracy is limited by the grid: the cell size is shown in the panel.
 
 See `examples/stock_sim_demo.nc` for a sample, and [docs/stock-simulation-metadata.md](docs/stock-simulation-metadata.md) for the full format and how to produce it from a post processor.
 
@@ -188,6 +189,8 @@ cnc-gcode-tools/
 │   ├── fontcreator.html          # Font Creator UI
 │   ├── gcodeexpand.html          # Parametric GCode expander UI
 │   ├── js/
+│   │   ├── prefs.js              # Settings storage (localStorage, or the host's)
+│   │   ├── viewer-ui.js          # Viewer layout shared by every host (tabs, popovers, sections)
 │   │   ├── gcode-expander.js     # Parametric GCode expander (shared with VS Code extension)
 │   │   ├── parser.js             # GCode streaming parser
 │   │   ├── camera.js             # Camera transformations
@@ -202,6 +205,7 @@ cnc-gcode-tools/
 │   │   └── font-creator-controller.js # Font Creator logic
 │   └── css/
 │       ├── common.css            # Shared styles
+│       ├── viewer.css            # Viewer layout (desktop and phone)
 │       ├── fluidnc.css           # FluidNC-specific styles
 │       └── font-creator.css      # Font Creator styles
 ├── vscode-extension/             # VS Code extension (packaged to .vsix by build.ps1)

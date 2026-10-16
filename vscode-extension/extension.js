@@ -189,6 +189,9 @@ function getViewerHtml(webview, context, filename, theme) {
         return webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'viewer', file)));
     }
     const cssUri        = viewerUri('common.css');
+    const viewerCssUri  = viewerUri('viewer.css');
+    const prefsUri      = viewerUri('prefs.js');
+    const viewerUiUri   = viewerUri('viewer-ui.js');
     const expanderUri   = viewerUri('gcode-expander.js');
     const parserUri     = viewerUri('parser.js');
     const cameraUri     = viewerUri('camera.js');
@@ -198,7 +201,7 @@ function getViewerHtml(webview, context, filename, theme) {
     const animatorUri   = viewerUri('animator.js');
     const controllerUri = viewerUri('controller.js');
     const csp = webview.cspSource;
-    const fileEsc = filename.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fileEsc = filename.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
     return `<!DOCTYPE html>
 <html lang="en" data-theme="${theme}">
@@ -208,172 +211,19 @@ function getViewerHtml(webview, context, filename, theme) {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${csp} 'unsafe-inline'; script-src ${csp} 'unsafe-inline'; img-src ${csp} data: blob:; worker-src blob:;">
 <title>GCode Viewer — ${fileEsc}</title>
 <link rel="stylesheet" href="${cssUri}">
-<style>
-  /* 2-column layout: canvas + right sidebar (no left gcode sidebar).
-     Desktop widths only - narrower panels use common.css's tabbed mobile layout. */
-  @media (min-width: 969px) {
-    .container { grid-template-columns: 1fr 360px !important; }
-    .canvas-container { grid-column: 1 !important; }
-    .sidebar { grid-column: 2 !important; }
-  }
-</style>
+<link rel="stylesheet" href="${viewerCssUri}">
 </head>
-<body>
-<div class="container">
-  <header>
-    <h1>📐 GCode Viewer</h1>
-    <div class="header-controls">
-      <span style="font-size:13px; opacity:0.7;">${fileEsc}</span>
-    </div>
-  </header>
-
-  <div class="mobile-tabs">
-    <div class="mobile-tabs-nav">
-      <button class="mobile-tab-button" data-tab="settings">⚙️ Settings</button>
-      <button class="mobile-tab-button active" data-tab="display">📊 Display</button>
-    </div>
-  </div>
-
-  <div class="canvas-container mobile-tab-content active" data-tab-content="display">
-    <div class="canvas-overlay-controls">
-      <button id="btn-toggle-view">3D View</button>
-      <button id="btn-reset-view" disabled>Reset View</button>
-    </div>
-    <canvas id="canvas2d"></canvas>
-    <canvas id="canvas3d" class="hidden"></canvas>
-    <canvas id="canvas3d-overlay" class="hidden"></canvas>
-  </div>
-
-  <aside class="sidebar mobile-tab-content" data-tab-content="settings">
-    <!-- Filled by Controller.updateExpansionUI() when a parametric file has expansion warnings -->
-    <div id="gcode-expand-notice" class="gcode-expand-notice" style="display:none;"></div>
-
-    <div class="panel">
-      <h3>Statistics</h3>
-      <div class="stats-grid">
-        <div class="stat-item"><div class="stat-label">Segments</div><div class="stat-value" id="stat-lines">-</div></div>
-        <div class="stat-item"><div class="stat-label">Est. Time</div><div class="stat-value" id="stat-time">-</div></div>
-        <div class="stat-item"><div class="stat-label">X Range</div><div class="stat-value" id="stat-x">-</div></div>
-        <div class="stat-item"><div class="stat-label">Y Range</div><div class="stat-value" id="stat-y">-</div></div>
-        <div class="stat-item"><div class="stat-label">Z Range</div><div class="stat-value" id="stat-z">-</div></div>
-      </div>
-    </div>
-
-    <div class="panel" id="tool-panel" style="display:none;">
-      <h3>Tools</h3>
-      <div id="tool-list" style="max-height:400px; overflow-y:auto;"></div>
-    </div>
-
-    <div class="panel" id="rapid-moves-panel" style="display:none;">
-      <h3>Rapid Moves (G0)</h3>
-      <div style="display:flex; align-items:center; gap:8px; padding:8px; background:var(--canvas-bg); border-radius:4px;">
-        <input type="checkbox" id="rapid-moves-visible" checked>
-        <input type="color" id="rapid-move-color" value="#999999" style="width:32px; height:24px; border:none; cursor:pointer;">
-        <label for="rapid-moves-visible" style="flex:1; font-size:13px; cursor:pointer;">Show Travel Moves</label>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3>View Controls</h3>
-      <div class="layer-controls">
-        <div style="margin-bottom:10px;">
-          <label style="font-size:12px; display:block; margin-bottom:5px;">Theme</label>
-          <div style="display:flex; gap:10px; margin-bottom:15px;">
-            <button id="theme-light" style="flex:1; padding:8px;">☀️ Light</button>
-            <button id="theme-dark" style="flex:1; padding:8px;">🌙 Dark</button>
-          </div>
-        </div>
-        <div style="margin-bottom:10px;">
-          <label style="font-size:12px; display:block; margin-bottom:5px;">Zoom</label>
-          <input type="range" id="zoom-slider" min="0.1" max="10" step="0.1" value="1" style="width:100%;">
-          <div style="text-align:center; font-size:11px; margin-top:5px;"><span id="zoom-value">100%</span></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel" id="animation-panel" style="display:none;">
-      <h3>Animation</h3>
-      <div class="animation-controls">
-        <div class="controls-row">
-          <button id="btn-play">Play</button>
-          <button id="btn-reset">Reset</button>
-        </div>
-        <div class="controls-row">
-          <button id="btn-prev">◀ Prev</button>
-          <button id="btn-next">Next ▶</button>
-        </div>
-        <div>
-          <label>Speed: <span id="speed-label">1x</span></label>
-          <input type="range" id="speed-slider" min="-10" max="10" value="0" step="1">
-        </div>
-        <div style="margin-top:10px;">
-          <label style="font-size:12px; display:block; margin-bottom:5px;">Segment: <span id="current-line">0</span> / <span id="total-lines">0</span></label>
-          <div style="font-size:11px; opacity:0.7; margin-bottom:5px;">File Line: <span id="current-file-line">-</span></div>
-          <input type="range" id="line-slider" min="0" max="0" step="1" value="0" style="width:100%;">
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3>Layer Filter</h3>
-      <div class="layer-controls">
-        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:8px;">
-          <span>Min: <span id="layer-min-value">-</span></span>
-          <span>Max: <span id="layer-max-value">-</span></span>
-        </div>
-        <div class="dual-range-slider">
-          <div class="range-highlight" id="layer-range-highlight"></div>
-          <input type="range" id="layer-slider-min" class="range-min" step="0.1">
-          <input type="range" id="layer-slider-max" class="range-max" step="0.1">
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3>3D Grid</h3>
-      <div class="layer-controls">
-        <div style="margin-bottom:10px;">
-          <label style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="grid-enabled" checked>
-            <span>Show Grid</span>
-          </label>
-        </div>
-        <div class="layer-inputs">
-          <div>
-            <label style="font-size:12px;">Width (X)</label>
-            <input type="number" id="grid-width" step="10" value="1200" min="0">
-          </div>
-          <div>
-            <label style="font-size:12px;">Height (Y)</label>
-            <input type="number" id="grid-height" step="10" value="2400" min="0">
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="privacy-notice">
-      🔒 All processing happens locally. No data is transmitted.
-    </div>
-  </aside>
-
-  <footer>
-    <div class="coordinate-display" id="coordinates">X: - Y: - Z: -</div>
-    <div>${fileEsc}</div>
-  </footer>
-</div>
-
-<!-- Prevent Controller's DOMContentLoaded auto-init -->
-<div id="text-to-gcode" style="display:none"></div>
-<!-- Hidden elements required by Controller/Animator internals -->
-<div id="progress-bar" class="hidden" style="display:none"><div id="progress-fill"></div></div>
-<div id="gcode-container" style="display:none"></div>
-<span id="current-file-line" style="display:none"></span>
+<body data-host="vscode" data-file-name="${fileEsc}">
+<!-- The layout is built by viewer-ui.js -->
+<div id="viewer-root"></div>
 
 <!-- Debug overlay: hidden unless something goes wrong (click to dismiss) -->
 <div id="dbg" title="Click to dismiss" style="display:none;position:fixed;bottom:0;left:0;right:0;max-height:160px;overflow-y:auto;
   background:rgba(0,0,0,0.82);color:#0f0;font:11px/1.4 monospace;padding:6px 10px;
   z-index:9999;white-space:pre-wrap;cursor:pointer;"></div>
 
+<script src="${prefsUri}"></script>
+<script src="${viewerUiUri}"></script>
 <script src="${expanderUri}"></script>
 <script src="${parserUri}"></script>
 <script src="${cameraUri}"></script>
@@ -401,6 +251,7 @@ function getViewerHtml(webview, context, filename, theme) {
   let ctrl;
   try {
     ctrl = new Controller();
+    ctrl.fileName = document.body.dataset.fileName;
     log('Controller OK');
   } catch(e) {
     log('Controller FAILED: ' + e, true);

@@ -47,30 +47,241 @@ class Controller {
         this.touches = [];
         this.lastPinchDistance = 0;
         this.lastTouchCenter = null;
-        
+
+        // The viewer layout (viewer-ui.js), or null on pages with their own markup (Font Creator)
+        this.ui = document.getElementById('vw');
+
         // Setup UI
         this.setupEventListeners();
         this.setupAnimator();
         this.setupSpaceMouse();
         this.setupMachineConfig();
         this.loadInputValues();
+        if (this.ui) this.setupViewerUI();
         this.startRenderLoop();
     }
 
     /**
      * Values the user entered for parameters set outside a parametric file (FluidNC
-     * globals such as #<_tool_radius>). Remembered in localStorage across files and visits.
+     * globals such as #<_tool_radius>). Remembered across files and visits.
      */
     loadInputValues() {
-        try {
-            const saved = JSON.parse(localStorage.getItem('gcodeInputValues') || 'null');
-            if (saved && typeof saved === 'object') this.parser.inputValues = saved;
-        } catch (e) { /* storage unavailable or corrupt */ }
+        const saved = Prefs.getJSON('gcodeInputValues');
+        if (saved && typeof saved === 'object') this.parser.inputValues = saved;
     }
 
     saveInputValues(values) {
         this.parser.inputValues = values;
-        try { localStorage.setItem('gcodeInputValues', JSON.stringify(values)); } catch (e) { /* storage unavailable */ }
+        Prefs.setJSON('gcodeInputValues', values);
+    }
+
+    /**
+     * The viewer layout's controls that the older page markup doesn't have: 2D/3D buttons,
+     * zoom buttons, speed menu, view options, keyboard shortcuts, recent files. Opens in 3D.
+     */
+    setupViewerUI() {
+        this.setView('3d');
+
+        const on = (id, event, handler) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener(event, handler);
+        };
+        on('view-2d', 'click', () => this.setView('2d'));
+        on('view-3d', 'click', () => this.setView('3d'));
+        on('btn-fit-pop', 'click', () => this.fitView());
+        on('btn-zoom-in', 'click', () => this.zoomStep(-1));
+        on('btn-zoom-out', 'click', () => this.zoomStep(1));
+        on('speed-select', 'change', (e) => this.animator.setSpeed(parseFloat(e.target.value)));
+
+        // Axes and the tool marker can be hidden; remembered
+        for (const [id, key, prop] of [['show-axes', 'vwShowAxes', 'showAxes'], ['show-tool', 'vwShowTool', 'showToolMarker']]) {
+            const box = document.getElementById(id);
+            if (!box) continue;
+            box.checked = Prefs.getBool(key, true);
+            this.renderer2d[prop] = this.renderer3d[prop] = box.checked;
+            box.addEventListener('change', () => {
+                Prefs.set(key, box.checked);
+                this.renderer2d[prop] = this.renderer3d[prop] = box.checked;
+            });
+        }
+
+        ViewerUI.onTabChange = (tab) => {
+            // A file loaded while the view was hidden was fitted to a guessed size
+            if (tab === 'view' && this.needsFit && this.bounds) {
+                requestAnimationFrame(() => this.fitView());
+            }
+        };
+        ViewerUI.onFileDrop = (file) => this.loadFile(file);
+
+        window.addEventListener('keydown', (e) => this.handleShortcut(e));
+        this.renderRecentFiles();
+    }
+
+    /**
+     * Recent files (standalone viewer): the last few files opened, kept in IndexedDB so
+     * they can be opened again (a browser can't reopen a file by its path). Files over
+     * 25 MB aren't kept.
+     */
+    recentDB() {
+        if (this.recentDBPromise) return this.recentDBPromise;
+        this.recentDBPromise = new Promise((resolve, reject) => {
+            try {
+                const request = indexedDB.open('cnc-gcode-viewer', 1);
+                request.onupgradeneeded = () => request.result.createObjectStore('recent', { keyPath: 'name' });
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            } catch (e) {
+                reject(e);
+            }
+        });
+        return this.recentDBPromise;
+    }
+
+    async recentFiles() {
+        try {
+            const db = await this.recentDB();
+            const all = await new Promise((resolve, reject) => {
+                const request = db.transaction('recent', 'readonly').objectStore('recent').getAll();
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => reject(request.error);
+            });
+            return all.sort((a, b) => b.opened - a.opened);
+        } catch (e) {
+            return [];
+        }
+    }
+
+    async rememberRecentFile(name, text) {
+        if (!document.getElementById('recent-list') || text.length > 25 * 1024 * 1024) return;
+        try {
+            const db = await this.recentDB();
+            const store = db.transaction('recent', 'readwrite').objectStore('recent');
+            store.put({ name, text, size: text.length, opened: Date.now() });
+            const keep = 6;
+            const all = (await this.recentFiles()).filter(f => f.name !== name);
+            if (all.length >= keep) {
+                const old = db.transaction('recent', 'readwrite').objectStore('recent');
+                all.slice(keep - 1).forEach(f => old.delete(f.name));
+            }
+        } catch (e) { /* IndexedDB unavailable: no recent files */ }
+        this.renderRecentFiles();
+    }
+
+    async renderRecentFiles() {
+        const list = document.getElementById('recent-list');
+        if (!list) return;
+        const files = await this.recentFiles();
+        if (files.length === 0) {
+            list.innerHTML = '<li class="vw-muted">Files you open appear here.</li>';
+            return;
+        }
+        const ago = (t) => {
+            const minutes = Math.round((Date.now() - t) / 60000);
+            if (minutes < 1) return 'just now';
+            if (minutes < 60) return `${minutes} min ago`;
+            const hours = Math.round(minutes / 60);
+            if (hours < 24) return `${hours} h ago`;
+            return new Date(t).toLocaleDateString();
+        };
+        list.innerHTML = files.map(f => `<li><button type="button" data-name="${this.escapeHtml(f.name)}"` +
+            `${f.name === this.fileName ? ' class="vw-recent-current"' : ''}>` +
+            `<span class="vw-recent-name">${this.escapeHtml(f.name)}</span>` +
+            `<span class="vw-recent-meta">${this.formatBytes(f.size)} · ${ago(f.opened)}</span></button></li>`).join('');
+        list.querySelectorAll('button[data-name]').forEach(button => {
+            button.addEventListener('click', async () => {
+                const file = (await this.recentFiles()).find(f => f.name === button.dataset.name);
+                if (file) this.loadFile(new File([file.text], file.name, { type: 'text/plain' }));
+            });
+        });
+    }
+
+    formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    /**
+     * Keyboard shortcuts: Space play/pause, arrows step, Home/End, [ ] speed, V 2D/3D.
+     * Not while typing in a field or with a modifier key held.
+     */
+    handleShortcut(e) {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const target = e.target;
+        if (target && (target.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) &&
+            !(target.type === 'range' || target.type === 'checkbox')) return;
+        if (this.segments.length === 0 || this.isRunning) return;
+        const a = this.animator;
+        switch (e.key) {
+            case ' ':
+                this.togglePlayback();
+                break;
+            case 'ArrowRight':
+                a.pause();
+                a.stepNext();
+                break;
+            case 'ArrowLeft':
+                a.pause();
+                a.stepPrev();
+                break;
+            case 'Home':
+                a.reset();
+                break;
+            case 'End':
+                a.setCurrentLine(this.segments.length);
+                break;
+            case '[':
+            case ']':
+                this.stepSpeed(e.key === ']' ? 1 : -1);
+                break;
+            case 'v':
+            case 'V':
+                this.setView(this.currentView === '2d' ? '3d' : '2d');
+                break;
+            default:
+                return;
+        }
+        e.preventDefault();
+    }
+
+    /**
+     * Next or previous entry of the speed menu
+     */
+    stepSpeed(direction) {
+        const select = document.getElementById('speed-select');
+        if (!select) return;
+        const index = Math.max(0, Math.min(select.options.length - 1, select.selectedIndex + direction));
+        select.selectedIndex = index;
+        this.animator.setSpeed(parseFloat(select.value));
+    }
+
+    /**
+     * Zoom buttons: one wheel notch in or out, about the middle of the view
+     */
+    zoomStep(direction) {
+        if (this.currentView === '2d') {
+            const w = this.canvas2d.width, h = this.canvas2d.height;
+            this.camera.zoom2D(direction * 100, w / 2, h / 2, w, h);
+        } else {
+            this.camera.zoom3D(direction * 100);
+        }
+        this.updateZoomSlider();
+    }
+
+    /**
+     * Fit the view to the toolpaths, or to the stock while it's shown, using the size of
+     * the view as laid out now
+     */
+    fitView() {
+        const bounds = this.viewBounds();
+        if (!bounds) return;
+        const box = this.canvas3d.parentElement.getBoundingClientRect();
+        const width = box.width || this.canvas2d.width;
+        const height = box.height || this.canvas2d.height;
+        // Hidden (another phone tab): fit again when the view is shown
+        this.needsFit = !(box.width > 0 && box.height > 0);
+        this.camera.fitToBounds(bounds, 0.1, width, height);
+        this.updateZoomSlider();
     }
 
     /**
@@ -93,25 +304,25 @@ class Controller {
         if (!button || !input || typeof parseFluidNCConfig !== 'function') return;
 
         button.addEventListener('click', () => input.click());
+        const chip = document.getElementById('btn-config-chip');
+        if (chip) chip.addEventListener('click', () => input.click());
         input.addEventListener('change', async () => {
             const file = input.files[0];
             if (!file) return;
             const text = await file.text();
             this.setMachineConfig(text, file.name);
-            try { localStorage.setItem('machineConfig', JSON.stringify({ name: file.name, text })); } catch (e) { /* storage unavailable */ }
+            Prefs.setJSON('machineConfig', { name: file.name, text });
             input.value = '';
         });
         if (clear) {
             clear.addEventListener('click', () => {
                 this.setMachineConfig(null);
-                try { localStorage.removeItem('machineConfig'); } catch (e) { /* storage unavailable */ }
+                Prefs.remove('machineConfig');
             });
         }
 
-        try {
-            const saved = JSON.parse(localStorage.getItem('machineConfig') || 'null');
-            if (saved && saved.text) this.setMachineConfig(saved.text, saved.name, false);
-        } catch (e) { /* storage unavailable or corrupt */ }
+        const saved = Prefs.getJSON('machineConfig');
+        if (saved && saved.text) this.setMachineConfig(saved.text, saved.name, false);
     }
 
     /**
@@ -127,12 +338,18 @@ class Controller {
         const status = document.getElementById('machine-config-status');
         const clear = document.getElementById('btn-clear-config');
         if (status) {
-            status.textContent = !config ? 'No machine config loaded'
+            status.textContent = !config ? (this.ui ? 'none' : 'No machine config loaded')
                 : config.count ? `${name} (${config.count} values)`
                 : `${name} (no numeric settings found)`;
             status.title = config ? 'Used for #</...> config values in parametric files' : '';
         }
         if (clear) clear.classList.toggle('hidden', !config);
+        const chip = document.getElementById('btn-config-chip');
+        if (chip) {
+            chip.textContent = config ? name : 'config.yaml: none';
+            chip.title = config ? `Machine config: ${name}. Click to load another` : 'Load a FluidNC config.yaml';
+            chip.classList.toggle('vw-loaded', !!config);
+        }
         this.updateGridSize();
 
         if (reload && this.gcodeText && this.parser.expansion) {
@@ -334,10 +551,7 @@ class Controller {
         const btnResetView = document.getElementById('btn-reset-view');
         if (btnResetView) {
             btnResetView.addEventListener('click', () => {
-                if (this.segments.length > 0) {
-                    this.camera.fitToBounds(this.viewBounds(), 0.1, this.canvas2d.width, this.canvas2d.height);
-                    this.updateZoomSlider();
-                }
+                if (this.segments.length > 0) this.fitView();
             });
         }
         
@@ -461,25 +675,23 @@ class Controller {
         const themeDarkBtn = document.getElementById('theme-dark');
         
         if (themeLightBtn && themeDarkBtn) {
-            // Set initial theme from localStorage or default to light
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            
-            themeLightBtn.addEventListener('click', () => {
-                document.documentElement.setAttribute('data-theme', 'light');
-                localStorage.setItem('theme', 'light');
+            // Set initial theme from the saved one, else the page's (light by default)
+            const savedTheme = Prefs.get('theme') || document.documentElement.getAttribute('data-theme') || 'light';
+            const setTheme = (theme, save = true) => {
+                document.documentElement.setAttribute('data-theme', theme);
+                if (save) Prefs.set('theme', theme);
+                themeLightBtn.setAttribute('aria-pressed', String(theme === 'light'));
+                themeDarkBtn.setAttribute('aria-pressed', String(theme === 'dark'));
+                const toggle = document.getElementById('btn-theme');
+                if (toggle) toggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
                 // Toolpath colors depend on the theme and are built into the buffers
                 this.updateRenderers();
                 this.render();
-            });
-            
-            themeDarkBtn.addEventListener('click', () => {
-                document.documentElement.setAttribute('data-theme', 'dark');
-                localStorage.setItem('theme', 'dark');
-                // Toolpath colors depend on the theme and are built into the buffers
-                this.updateRenderers();
-                this.render();
-            });
+            };
+            this.setTheme = setTheme;
+            setTheme(savedTheme, false);
+            themeLightBtn.addEventListener('click', () => setTheme('light'));
+            themeDarkBtn.addEventListener('click', () => setTheme('dark'));
         }
         
         // Grid controls (no action needed - renderer checks these values each frame)
@@ -496,7 +708,10 @@ class Controller {
             const input = document.getElementById(id);
             if (input) {
                 input.addEventListener('input', (e) => {
-                    if (e.isTrusted) this.gridUserSet = true;
+                    if (e.isTrusted) {
+                        this.gridUserSet = true;
+                        this.updateGridSize();
+                    }
                 });
             }
         }
@@ -576,7 +791,8 @@ class Controller {
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
                 const world = this.renderer2d.canvasToWorld(x, y);
-                this.updateCoordinateDisplay(world.x, world.y, 0);
+                this.mouseOverView = true;
+                this.updateCoordinateDisplay(world.x, world.y, null);
             }
         };
         
@@ -600,9 +816,7 @@ class Controller {
         };
         
         const onDoubleClick = () => {
-            if (this.bounds) {
-                this.camera.fitToBounds(this.viewBounds());
-            }
+            if (this.bounds) this.fitView();
         };
         
         const onContextMenu = (e) => {
@@ -610,11 +824,21 @@ class Controller {
         };
         
         // Add listeners to both canvases
+        const onMouseLeave = () => {
+            onMouseUp();
+            if (this.mouseOverView) {
+                this.mouseOverView = false;
+                if (this.ui && this.segments.length > 0) {
+                    this.updateTransport(this.animator.getCurrentIndex(), this.animator.segmentProgress);
+                }
+            }
+        };
+
         [canvas2d, canvas3d].forEach(canvas => {
             canvas.addEventListener('mousedown', onMouseDown);
             canvas.addEventListener('mousemove', onMouseMove);
             canvas.addEventListener('mouseup', onMouseUp);
-            canvas.addEventListener('mouseleave', onMouseUp);
+            canvas.addEventListener('mouseleave', onMouseLeave);
             canvas.addEventListener('wheel', onWheel, { passive: false });
             canvas.addEventListener('dblclick', onDoubleClick);
             canvas.addEventListener('contextmenu', onContextMenu);
@@ -757,10 +981,64 @@ class Controller {
             } else {
                 document.getElementById('current-file-line').textContent = '-';
             }
-            
-            const playBtn = document.getElementById('btn-play');
-            playBtn.textContent = this.animator.getIsPlaying() ? 'Pause' : 'Play';
+
+            this.updatePlayButton();
+            if (this.ui) this.updateTransport(index, segmentProgress);
         };
+    }
+
+    updatePlayButton() {
+        const playBtn = document.getElementById('btn-play');
+        if (!playBtn) return;
+        const playing = this.animator.getIsPlaying();
+        if (this.ui) {
+            playBtn.classList.toggle('is-playing', playing);
+            playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+        } else {
+            playBtn.textContent = playing ? 'Pause' : 'Play';
+        }
+    }
+
+    /**
+     * Transport bar readouts: time on the animation timeline, the scrub bar's filled
+     * part, and the position of the tool
+     */
+    updateTransport(index, segmentProgress = 1) {
+        const a = this.animator;
+        const n = this.segments.length;
+        let time = 0;
+        if (a.segmentEndTimes && n > 0) {
+            const i = Math.min(index, n);
+            const start = a.segmentStartTime(i);
+            const end = i < n ? a.segmentEndTimes[i] : start;
+            time = start + (end - start) * (i < n ? segmentProgress : 0);
+        }
+        const timeLabel = document.getElementById('tp-time');
+        if (timeLabel) timeLabel.textContent = `${this.formatClock(time)} / ${this.formatClock(a.totalAnimTime || 0)}`;
+        const slider = document.getElementById('line-slider');
+        if (slider) slider.style.setProperty('--vw-fill', (n > 0 ? Math.min(100, index / n * 100) : 0) + '%');
+
+        // Where the tool is (a mouse over the 2D view shows the point under it instead)
+        if (n > 0 && !this.mouseOverView) {
+            const seg = this.segments[Math.min(index, n - 1)];
+            const t = index >= n ? 1 : segmentProgress;
+            const p = seg.start && seg.end ? {
+                x: seg.start.x + (seg.end.x - seg.start.x) * t,
+                y: seg.start.y + (seg.end.y - seg.start.y) * t,
+                z: seg.start.z + (seg.end.z - seg.start.z) * t
+            } : null;
+            if (p && !this.machinePosition) this.updateCoordinateDisplay(p.x, p.y, p.z);
+        }
+    }
+
+    /**
+     * Seconds as m:ss or h:mm:ss
+     */
+    formatClock(seconds) {
+        const s = Math.max(0, Math.round(seconds || 0));
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+        return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+            : `${m}:${String(sec).padStart(2, '0')}`;
     }
 
     /**
@@ -792,6 +1070,9 @@ class Controller {
         if (!ui) return;
         this.hideSimPrompt();
         ui.options.style.display = this.simEvents.length > 0 ? '' : 'none';
+        const none = document.getElementById('playback-none');
+        if (none) none.style.display = this.simEvents.length > 0 ? 'none' : '';
+        this.renderScrubMarks();
         // After loading, the whole job is drawn
         this.updateSimMessages(this.segments.length);
     }
@@ -802,7 +1083,8 @@ class Controller {
     getSimUI() {
         if (this.simUI) return this.simUI;
         const container = this.canvas3d ? this.canvas3d.parentElement : null;
-        const animation = document.querySelector('#animation-panel .animation-controls');
+        const animation = document.getElementById('playback-options') ||
+            document.querySelector('#animation-panel .animation-controls');
         if (!container || !animation) return null;
 
         const console_ = document.createElement('div');
@@ -816,25 +1098,30 @@ class Controller {
 
         const options = document.createElement('div');
         options.className = 'sim-options';
-        options.innerHTML =
-            '<label title="MSG and PRINT messages, probe results and program stops, as a controller UI shows them">' +
-            '<input type="checkbox" id="sim-show-messages"> Show messages</label>' +
-            '<label title="Stop at each M0 and show its prompt with the last message, until Resume">' +
-            '<input type="checkbox" id="sim-pause-m0"> Stop at M0 pauses</label>' +
-            '<label title="While playing, move the 3D view in close on each probe, then back">' +
-            '<input type="checkbox" id="sim-probe-closeup"> Close-up on probing</label>';
+        options.innerHTML = this.ui
+            ? '<label><input type="checkbox" id="sim-show-messages"><span>Show messages' +
+              '<small>(MSG, …) and (PRINT, …) in the console</small></span></label>' +
+              '<label><input type="checkbox" id="sim-pause-m0"><span>Stop at M0 pauses' +
+              '<small>Waits for Resume, like the pendant</small></span></label>' +
+              '<label><input type="checkbox" id="sim-probe-closeup"><span>Close-up on probing' +
+              '<small>3D view moves in on each G38 probe</small></span></label>'
+            : '<label title="MSG and PRINT messages, probe results and program stops, as a controller UI shows them">' +
+              '<input type="checkbox" id="sim-show-messages"> Show messages</label>' +
+              '<label title="Stop at each M0 and show its prompt with the last message, until Resume">' +
+              '<input type="checkbox" id="sim-pause-m0"> Stop at M0 pauses</label>' +
+              '<label title="While playing, move the 3D view in close on each probe, then back">' +
+              '<input type="checkbox" id="sim-probe-closeup"> Close-up on probing</label>';
+        if (this.ui) options.className += ' vw-playback-options';
         animation.appendChild(options);
 
-        const pref = (key, fallback) => {
-            try { const v = localStorage.getItem(key); return v === null ? fallback : v === 'true'; } catch (e) { return fallback; }
-        };
+        const pref = (key, fallback) => Prefs.getBool(key, fallback);
         const showMessages = options.querySelector('#sim-show-messages');
         const pauseAtM0 = options.querySelector('#sim-pause-m0');
         const probeCloseUp = options.querySelector('#sim-probe-closeup');
         showMessages.checked = pref('simShowMessages', true);
         pauseAtM0.checked = pref('simPauseAtM0', true);
         probeCloseUp.checked = pref('simProbeCloseUp', true);
-        const save = (key, value) => { try { localStorage.setItem(key, String(value)); } catch (e) { /* storage unavailable */ } };
+        const save = (key, value) => Prefs.set(key, value);
         showMessages.addEventListener('change', () => {
             save('simShowMessages', showMessages.checked);
             this.simShownCount = -1;
@@ -1007,19 +1294,83 @@ class Controller {
     }
 
     /**
+     * Tool changes (a tick in the tool's color) and M0 pauses (a diamond) along the scrub
+     * bar and the running job's progress bar, at their place in the segment list
+     */
+    renderScrubMarks() {
+        const n = this.segments.length;
+        let html = '';
+        if (n > 0) {
+            let lastTool = null;
+            this.segments.forEach((seg, i) => {
+                if (seg.type !== 'cut') return;
+                const tool = seg.tool || 1;
+                if (lastTool !== null && tool !== lastTool) {
+                    const state = this.tools.get(tool);
+                    html += `<span class="vw-mark" style="left:${(i / n * 100).toFixed(2)}%;background:${state ? state.color : '#999'}" title="Tool change: T${tool}"></span>`;
+                }
+                lastTool = tool;
+            });
+            for (const pause of this.simPauses || []) {
+                html += `<span class="vw-mark vw-mark-m0" style="left:${(pause.index / n * 100).toFixed(2)}%" title="M0 pause"></span>`;
+            }
+        }
+        for (const id of ['scrub-marks', 'run-marks']) {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = html;
+        }
+    }
+
+    /**
+     * After a file is loaded and drawn: header, summary, scrub bar and the view's fit
+     * (viewer layout only)
+     * @param {string} name - file name shown in the header
+     */
+    onFileLoaded(name) {
+        if (!this.ui) return;
+        this.fileName = name || this.fileName || 'G-code';
+        const lines = this.gcodeText ? this.gcodeText.split('\n').length : 0;
+        const fileName = document.getElementById('file-name');
+        if (fileName) {
+            fileName.textContent = this.fileName;
+            fileName.title = this.fileName;
+        }
+        const meta = document.getElementById('file-meta');
+        if (meta) meta.textContent = `${lines} lines · ${this.animator.getFormattedTime()}`;
+        const empty = document.getElementById('vw-empty');
+        if (empty) empty.hidden = true;
+        this.ui.classList.add('vw-loaded');
+        const sumTime = document.getElementById('sum-time');
+        if (sumTime) sumTime.title = 'Estimated run time, with time allowed for tool changes ' +
+            `(${this.animator.manualToolChangeTime} s at an M0, ${this.animator.autoToolChangeTime} s at an M6). ` +
+            'The transport bar plays the moves only.';
+        const warn = document.getElementById('warn-section');
+        if (warn) warn.style.display = '';
+        this.updateWarnings();
+        const speed = document.getElementById('speed-select');
+        if (speed) this.animator.setSpeed(parseFloat(speed.value));
+        this.updateTransport(0, 0);
+        this.updatePlayButton();
+        if (ViewerUI.isPhone() && ViewerUI.root.dataset.tab === 'files') ViewerUI.setTab('view');
+        ViewerUI.closePopover();
+        requestAnimationFrame(() => this.fitView());
+    }
+
+    /**
      * Load GCode file
      */
     async loadFile(file) {
         const progressBar = document.getElementById('progress-bar');
         const progressFill = document.getElementById('progress-fill');
-        
+
         progressBar.classList.remove('hidden');
         progressFill.style.width = '0%';
-        
+
         try {
             // Read file text for display
             const text = await file.text();
             this.gcodeText = text;
+            if (this.ui) this.rememberRecentFile(file.name, text);
             
             const segments = await this.parser.parseFile(file, (percent) => {
                 progressFill.style.width = percent + '%';
@@ -1071,11 +1422,12 @@ class Controller {
             lineSlider.max = segments.length;
             lineSlider.value = 0;
             document.getElementById('total-lines').textContent = segments.length;
-            
+            this.onFileLoaded(file.name);
+
             setTimeout(() => {
                 progressBar.classList.add('hidden');
             }, 500);
-            
+
         } catch (error) {
             console.error('Error loading file:', error);
             alert('Error loading GCode file. Please check the console for details.');
@@ -1176,7 +1528,11 @@ class Controller {
             
             const totalLinesSpan = document.getElementById(`${idPrefix}total-lines`);
             if (totalLinesSpan) totalLinesSpan.textContent = segments.length;
-            
+            if (!idPrefix) {
+                this.initializeLayerSliders();
+                this.onFileLoaded(this.fileName);
+            }
+
             // Render initial view
             if (this.is3DView) {
                 this.renderer3d.render();
@@ -1244,7 +1600,11 @@ class Controller {
     updateToolPanel(idPrefix = '') {
         const toolList = document.getElementById(`${idPrefix}tool-list`);
         if (!toolList) return;
-        
+        if (this.ui && !idPrefix) {
+            this.renderToolRows(toolList);
+            return;
+        }
+
         toolList.innerHTML = '';
         
         if (this.tools.size === 0) {
@@ -1302,9 +1662,79 @@ class Controller {
     }
     
     /**
+     * Toolpaths list (viewer layout): a row per tool and one for rapids, each with
+     * visibility, color, name and estimated time
+     */
+    renderToolRows(toolList) {
+        const esc = (s) => this.escapeHtml(String(s));
+        const clock = (seconds) => this.formatClock(seconds);
+        // Rapids' time: the moves' own times, from the animator's timeline
+        let rapidTime = 0;
+        const times = this.animator.segmentMoveTimes;
+        if (times) this.segments.forEach((seg, i) => { if (seg.type === 'rapid') rapidTime += times[i] || 0; });
+
+        const rows = [...this.tools].map(([num, state]) => `
+            <label class="vw-tool tool-item" data-tool="${num}">
+                <input type="checkbox" data-role="visible"${state.visible ? ' checked' : ''} aria-label="Show T${num}">
+                <input type="color" class="vw-swatch" data-role="color" value="${esc(state.color)}" aria-label="Color for T${num}">
+                <span class="vw-tool-id">T${num}</span>
+                <span class="vw-tool-name" title="${esc(state.name || '')}">${esc(this.shortToolName(state.name, num))}</span>
+                <span class="vw-tool-time">${clock(this.animator.toolTimes.get(num) || 0)}</span>
+            </label>`);
+        rows.push(`
+            <label class="vw-tool vw-tool-rapid">
+                <input type="checkbox" id="rapid-moves-visible"${this.rapidMovesVisible ? ' checked' : ''} aria-label="Show rapid moves">
+                <input type="color" class="vw-swatch" id="rapid-move-color" value="${esc(this.rapidMoveColor)}" aria-label="Color for rapid moves">
+                <span class="vw-tool-id">G0</span>
+                <span class="vw-tool-name">Rapids</span>
+                <span class="vw-tool-time">${clock(rapidTime)}</span>
+            </label>`);
+        toolList.innerHTML = this.tools.size === 0
+            ? '<div class="vw-muted">No cutting moves</div>' + rows[rows.length - 1]
+            : rows.join('');
+
+        toolList.querySelectorAll('.tool-item').forEach(row => {
+            const state = this.tools.get(parseInt(row.dataset.tool));
+            row.querySelector('[data-role="visible"]').addEventListener('change', (e) => {
+                state.visible = e.target.checked;
+                this.updateRenderers();
+            });
+            row.querySelector('[data-role="color"]').addEventListener('input', (e) => {
+                state.color = e.target.value;
+                this.updateRenderers();
+                this.renderScrubMarks();
+            });
+        });
+        toolList.querySelector('#rapid-moves-visible').addEventListener('change', (e) => {
+            this.rapidMovesVisible = e.target.checked;
+            this.updateRenderers();
+        });
+        toolList.querySelector('#rapid-move-color').addEventListener('input', (e) => {
+            this.rapidMoveColor = e.target.value;
+            this.updateRenderers();
+        });
+        this.updateActiveToolHighlight();
+    }
+
+    /**
+     * A tool's name without a leading "Tool 1:" / "T1 -", which the row shows already
+     */
+    shortToolName(name, num) {
+        if (!name) return `Tool ${num}`;
+        const short = name.replace(/^\s*(tool\s*#?\s*|t)\d+\s*[:\-–·]?\s*/i, '').trim();
+        return short || name;
+    }
+
+    /**
      * Update active tool highlighting in tool panel
      */
     updateActiveToolHighlight() {
+        if (this.ui) {
+            document.querySelectorAll('.vw-tool.tool-item').forEach(item => {
+                item.classList.toggle('active', parseInt(item.dataset.tool) === this.currentActiveTool);
+            });
+            return;
+        }
         // Remove highlighting from all tools
         const toolItems = document.querySelectorAll('.tool-item');
         toolItems.forEach(item => {
@@ -1352,6 +1782,9 @@ class Controller {
         if (typeof StockSimulator === 'undefined') return;
         const panel = this.getStockPanel();
         if (!panel) return;
+        this.stockWarnings = [];
+        this.stockWarningsKey = null;
+        this.warningsShown = false;
 
         const meta = this.parser.simMeta;
         const units = meta.units || this.parser.units;
@@ -1391,8 +1824,8 @@ class Controller {
             quality: this.stockConfig ? this.stockConfig.quality : 'auto'
         };
 
-        let wantVisible = false;
-        try { wantVisible = localStorage.getItem('stockSimVisible') === 'true'; } catch (e) { /* storage unavailable */ }
+        // The viewer layout shows the stock by default when the file describes it
+        const wantVisible = Prefs.getBool('stockSimVisible', !!this.ui);
         this.stockVisible = wantVisible && fromFile;
 
         // Jobs that run before this one (PriorJob comments), loaded where the host can
@@ -1406,10 +1839,7 @@ class Controller {
         this.updateStockDisplay();
         this.updateGridSize();
         // The file was fitted to its toolpaths; with the stock shown, frame that instead
-        if (this.stockVisible && this.stockConfigProblem() === null) {
-            this.camera.fitToBounds(this.viewBounds(), 0.1, this.canvas2d.width, this.canvas2d.height);
-            this.updateZoomSlider();
-        }
+        if (this.stockVisible && this.stockConfigProblem() === null) this.fitView();
         if (this.priorJobs.length > 0) this.autoLoadPriorJobs();
     }
 
@@ -1556,13 +1986,49 @@ class Controller {
     getStockPanel() {
         let panel = document.getElementById('stock-panel');
         if (panel) return panel;
-        const anchor = document.getElementById('rapid-moves-panel') || document.getElementById('tool-panel');
+        const mount = document.getElementById('stock-mount');
+        const anchor = mount || document.getElementById('rapid-moves-panel') || document.getElementById('tool-panel');
         if (!anchor) return null;
 
-        panel = document.createElement('div');
-        panel.className = 'panel';
+        panel = document.createElement(mount ? 'section' : 'div');
+        panel.className = mount ? 'vw-section' : 'panel';
         panel.id = 'stock-panel';
-        panel.innerHTML = `
+        if (mount) panel.dataset.section = 'stock';
+        const qualityOptions = `
+                            <option value="auto">Auto (from the tools)</option>
+                            <option value="500000">Draft (0.5M cells)</option>
+                            <option value="2000000">Normal (2M cells)</option>
+                            <option value="5000000">Fine (5M cells)</option>
+                            <option value="10000000">Ultra (10M cells)</option>`;
+        panel.innerHTML = mount ? `
+            <div class="vw-section-head" role="button" tabindex="0" aria-expanded="true">${VIEWER_ICONS.chevron}<span>Stock simulation</span>
+                <label class="vw-head-check" title="Show the machined stock as a solid (3D view)"><input type="checkbox" id="stock-visible"> Show</label>
+            </div>
+            <div class="vw-section-body">
+                <div class="stock-status" id="stock-status"></div>
+                <label class="stock-check"><input type="checkbox" id="stock-paths" checked><span>Toolpaths on the stock</span></label>
+                <label class="stock-check stock-sub" title="While animating, hide the lines of earlier layers: they're already cut into the stock"><input type="checkbox" id="stock-paths-layer"><span>Current layer only</span></label>
+                <div class="stock-priors">
+                    <div class="stock-priors-head">
+                        <span title="Files that run before this one, oldest first. Their cuts are made before this job's.">Earlier jobs</span>
+                        <button type="button" id="stock-prior-add">Add…</button>
+                    </div>
+                    <ol class="stock-prior-list" id="stock-prior-list"></ol>
+                    <input type="file" id="stock-prior-input" multiple accept=".nc,.gcode,.ngc,.gco,.tap,.txt" hidden>
+                </div>
+                <label class="stock-detail"><span>Detail</span>
+                    <select id="stock-quality" title="Grid resolution: finer shows small details more accurately, but uses more memory and takes longer to carve">${qualityOptions}</select>
+                </label>
+                <div class="stock-info" id="stock-info"></div>
+                <details class="stock-settings" id="stock-settings">
+                    <summary>Stock and tool sizes</summary>
+                    <div id="stock-form"></div>
+                    <div class="stock-actions"><span class="vw-spacer"></span><button type="button" id="stock-apply">Apply</button></div>
+                    <div class="stock-help">Stock bounds are in the file's coordinates. A post processor can supply these with
+                        <code>(Stock: XMIN=… XMAX=… YMIN=… YMAX=… ZMIN=… ZMAX=…)</code> and
+                        <code>(ToolDef N: SHAPE=flat D=…)</code> comments.</div>
+                </details>
+            </div>` : `
             <h3>Stock Simulation</h3>
             <div class="stock-status" id="stock-status"></div>
             <label class="stock-check"><input type="checkbox" id="stock-visible"><span>Show machined stock (3D view)</span></label>
@@ -1582,13 +2048,7 @@ class Controller {
                 <div id="stock-form"></div>
                 <div class="stock-actions">
                     <label>Detail
-                        <select id="stock-quality" title="Grid resolution: finer shows small details more accurately, but uses more memory and takes longer to carve">
-                            <option value="auto">Auto (from the tools)</option>
-                            <option value="500000">Draft (0.5M cells)</option>
-                            <option value="2000000">Normal (2M cells)</option>
-                            <option value="5000000">Fine (5M cells)</option>
-                            <option value="10000000">Ultra (10M cells)</option>
-                        </select>
+                        <select id="stock-quality" title="Grid resolution: finer shows small details more accurately, but uses more memory and takes longer to carve">${qualityOptions}</select>
                     </label>
                     <button type="button" id="stock-apply">Apply</button>
                 </div>
@@ -1596,19 +2056,40 @@ class Controller {
                     <code>(Stock: XMIN=… XMAX=… YMIN=… YMAX=… ZMIN=… ZMAX=…)</code> and
                     <code>(ToolDef N: SHAPE=flat D=…)</code> comments.</div>
             </details>`;
-        anchor.insertAdjacentElement('afterend', panel);
+        if (mount) {
+            mount.replaceWith(panel);
+            ViewerUI.restoreSection(panel);
+            // Detail applies straight away (the form's Apply is for sizes)
+            panel.querySelector('#stock-quality').addEventListener('change', (e) => {
+                const cfg = this.stockConfig;
+                if (!cfg) return;
+                cfg.quality = e.target.value === 'auto' ? 'auto' : parseFloat(e.target.value) || 'auto';
+                this.stockSim = null;
+                this.renderer3d.setStockSimulator(null);
+                this.updateStockDisplay();
+            });
+            const head = panel.querySelector('.vw-section-head');
+            head.addEventListener('keydown', (e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && e.target === head) {
+                    e.preventDefault();
+                    ViewerUI.setSectionOpen(panel, panel.classList.contains('collapsed'));
+                }
+            });
+        } else {
+            anchor.insertAdjacentElement('afterend', panel);
+        }
 
         panel.querySelector('#stock-visible').addEventListener('change', (e) => {
             this.stockVisible = e.target.checked;
-            try { localStorage.setItem('stockSimVisible', String(this.stockVisible)); } catch (err) { /* storage unavailable */ }
+            Prefs.set('stockSimVisible', this.stockVisible);
             if (this.stockVisible && this.currentView === '2d') this.toggleView();
             this.updateStockDisplay();
         });
         panel.querySelector('#stock-paths').addEventListener('change', () => this.updateStockDisplay());
         const layerOnly = panel.querySelector('#stock-paths-layer');
-        try { layerOnly.checked = localStorage.getItem('stockPathsLayerOnly') !== 'false'; } catch (e) { layerOnly.checked = true; }
+        layerOnly.checked = Prefs.get('stockPathsLayerOnly') !== 'false';
         layerOnly.addEventListener('change', () => {
-            try { localStorage.setItem('stockPathsLayerOnly', String(layerOnly.checked)); } catch (e) { /* storage unavailable */ }
+            Prefs.set('stockPathsLayerOnly', layerOnly.checked);
             this.updateStockDisplay();
         });
         panel.querySelector('#stock-apply').addEventListener('click', () => this.applyStockForm());
@@ -1742,7 +2223,7 @@ class Controller {
         if (this.stockConfigProblem() === null) {
             this.stockVisible = true;
             document.getElementById('stock-visible').checked = true;
-            try { localStorage.setItem('stockSimVisible', 'true'); } catch (e) { /* storage unavailable */ }
+            Prefs.set('stockSimVisible', true);
             if (this.currentView === '2d') this.toggleView();
         }
         this.updateStockDisplay();
@@ -1804,6 +2285,8 @@ class Controller {
         if (layerOnly) layerOnly.disabled = paths ? !paths.checked : false;
         this.renderer3d.onStockProgress = visible ? (sim) => this.updateStockInfo(sim) : null;
         if (!visible) this.setStockInfo('');
+        if (status) status.classList.toggle('vw-ok-text', !!this.stockConfig && !problem && this.stockConfig.fromFile);
+        if (this.ui) this.updateWarnings();
     }
 
     /**
@@ -1860,22 +2343,58 @@ class Controller {
             : `${sim.nx} × ${sim.ny} grid, ${+sim.dx.toFixed(3)} ${unit} cells`;
         const prior = (this.priorJobs || []).filter(job => job.status === 'loaded').length;
         if (prior > 0) html += `, after ${prior} earlier job${prior === 1 ? '' : 's'}`;
+        const warnings = [];
         for (const w of this.stockFluteWarnings || []) {
             const lines = w.lines.map(n => this.toDisplayLine(n)).filter(n => n > 0);
             const shown = lines.slice(0, 5).join(', ') + (lines.length > 5 ? ', …' : '');
-            html += `<span class="stock-warning">⚠️ T${w.tool} cuts ${+w.over.toFixed(3)} ${unit} deeper than its ` +
+            warnings.push(`T${w.tool} cuts ${+w.over.toFixed(3)} ${unit} deeper than its ` +
                 `${+w.fluteLength.toFixed(3)} ${unit} flute length, so the shank would rub` +
-                (shown ? ` (line${lines.length === 1 ? '' : 's'} ${shown})` : '') + '</span>';
+                (shown ? ` (line${lines.length === 1 ? '' : 's'} ${shown})` : ''));
         }
         if (sim.gouges.size > 0) {
             const lines = [...sim.gouges].sort((a, b) => a - b)
                 .map(i => this.toDisplayLine(sim.segments[i].lineNum)).filter(n => n > 0);
             const shown = lines.slice(0, 5).join(', ') + (lines.length > 5 ? ', …' : '');
             const count = sim.gouges.size;
-            html += `<span class="stock-warning">⚠️ ${count} rapid move${count === 1 ? '' : 's'} cut${count === 1 ? 's' : ''} into the stock` +
-                (shown ? ` (line${lines.length === 1 ? '' : 's'} ${shown})` : '') + '</span>';
+            warnings.push(`${count} rapid move${count === 1 ? '' : 's'} cut${count === 1 ? 's' : ''} into the stock` +
+                (shown ? ` (line${lines.length === 1 ? '' : 's'} ${shown})` : ''));
+        }
+        if (this.ui) {
+            // Listed in the Warnings section
+            this.setStockWarnings(warnings);
+        } else {
+            html += warnings.map(w => `<span class="stock-warning">⚠️ ${w}</span>`).join('');
         }
         this.setStockInfo(html);
+    }
+
+    setStockWarnings(warnings) {
+        const key = warnings.join('\n');
+        if (key === this.stockWarningsKey) return;
+        this.stockWarningsKey = key;
+        this.stockWarnings = warnings;
+        this.updateWarnings();
+    }
+
+    /**
+     * Warnings section (viewer layout): stock simulation problems (rapids into the stock,
+     * cuts deeper than the flutes). The count opens the section when there are any.
+     */
+    updateWarnings() {
+        const list = document.getElementById('warn-list');
+        const count = document.getElementById('warn-count');
+        if (!list || !count) return;
+        const warnings = this.stockVisible ? (this.stockWarnings || []) : [];
+        list.innerHTML = warnings.length > 0
+            ? warnings.map(w => `<li>${this.escapeHtml(w)}</li>`).join('')
+            : `<li class="vw-none">${this.stockVisible ? 'No problems found in the simulated cut.' : 'Turn on the stock simulation to check the cut.'}</li>`;
+        count.textContent = warnings.length;
+        count.classList.toggle('vw-warn', warnings.length > 0);
+        const section = document.getElementById('warn-section');
+        if (section && warnings.length > 0 && !this.warningsShown) {
+            this.warningsShown = true;
+            ViewerUI.setSectionOpen(section, true);
+        }
     }
 
     setStockInfo(html) {
@@ -1908,7 +2427,10 @@ class Controller {
         const heightInput = document.getElementById('grid-height');
         if (!widthInput || !heightInput) return;
         if (!this.gridDefault) this.gridDefault = { width: widthInput.value, height: heightInput.value };
-        if (this.gridUserSet || this.gridFromMachine) return;
+        const source = document.getElementById('grid-source');
+        const setSource = (text) => { if (source) source.textContent = text; };
+        if (this.gridUserSet) return setSource('Size entered by hand.');
+        if (this.gridFromMachine) return setSource('The machine\'s travel, read from the controller.');
 
         const cfg = this.stockConfig;
         const inches = (cfg ? cfg.units : this.parser.units) === 'inches';
@@ -1916,9 +2438,11 @@ class Controller {
         const travelX = values && values['/axes/x/max_travel_mm'];
         const travelY = values && values['/axes/y/max_travel_mm'];
         let width = this.gridDefault.width, height = this.gridDefault.height;
+        setSource('Sized from the stock. Load a config.yaml to use the machine\'s travel.');
         if (travelX > 0 && travelY > 0) {
             width = +(inches ? travelX / 25.4 : travelX).toFixed(2);
             height = +(inches ? travelY / 25.4 : travelY).toFixed(2);
+            setSource('The machine\'s travel, from the loaded config.yaml.');
         } else if (cfg && this.stockConfigProblem() === null) {
             const step = inches ? 1 : 10;
             const around = (size) => Math.max(step, Math.ceil((size + Math.max(size * 0.05, step)) / step) * step);
@@ -1998,16 +2522,43 @@ class Controller {
         // Set layer filter defaults
         if (layerMin) layerMin.placeholder = this.bounds.minZ.toFixed(1);
         if (layerMax) layerMax.placeholder = this.bounds.maxZ.toFixed(1);
+
+        // Viewer layout: one summary line
+        const sumTime = document.getElementById(`${idPrefix}sum-time`);
+        if (sumTime) {
+            const b = this.bounds;
+            const range = (min, max) => `${this.formatCoord(min)} – ${this.formatCoord(max)}`;
+            sumTime.textContent = this.animator.getFormattedTime();
+            const tools = this.tools.size;
+            document.getElementById(`${idPrefix}sum-meta`).textContent =
+                `est. · ${this.segments.length} segments · ${tools} tool${tools === 1 ? '' : 's'}`;
+            document.getElementById(`${idPrefix}sum-ranges`).innerHTML =
+                `<span>X ${range(b.minX, b.maxX)}</span><span>Y ${range(b.minY, b.maxY)}</span><span>Z ${range(b.minZ, b.maxZ)}</span>`;
+        }
     }
 
     /**
-     * Update coordinate display
+     * A coordinate with up to one decimal (three for inch files), minus sign as −
+     */
+    formatCoord(value, decimals) {
+        if (decimals === undefined) decimals = this.parser.units === 'inches' ? 3 : 1;
+        const text = (+value.toFixed(decimals)).toFixed(decimals);
+        return text.replace(/^-/, '−').replace(/^−(0\.?0*)$/, '$1');
+    }
+
+    /**
+     * Update coordinate display (z null: a point under the mouse in the 2D view)
      */
     updateCoordinateDisplay(x, y, z) {
         const coordsElement = document.getElementById('coordinates');
-        if (coordsElement) {
-            coordsElement.textContent = `X: ${x.toFixed(2)} Y: ${y.toFixed(2)} Z: ${z.toFixed(2)}`;
+        if (!coordsElement) return;
+        if (this.ui) {
+            const d = this.parser.units === 'inches' ? 3 : 2;
+            coordsElement.textContent = `X ${this.formatCoord(x, d)}  Y ${this.formatCoord(y, d)}` +
+                (z === null || z === undefined ? '' : `  Z ${this.formatCoord(z, d)}`);
+            return;
         }
+        coordsElement.textContent = `X: ${x.toFixed(2)} Y: ${y.toFixed(2)} Z: ${(z || 0).toFixed(2)}`;
     }
 
     /**
@@ -2521,20 +3072,27 @@ class Controller {
      * Toggle between 2D and 3D views
      */
     toggleView() {
-        if (this.currentView === '2d') {
-            this.currentView = '3d';
-            this.canvas2d.classList.add('hidden');
-            this.canvas3d.classList.remove('hidden');
-            this.canvas3dOverlay.classList.remove('hidden');
-            document.getElementById('btn-toggle-view').textContent = '2D View';
-        } else {
-            this.currentView = '2d';
-            this.canvas3d.classList.add('hidden');
-            this.canvas3dOverlay.classList.add('hidden');
-            this.canvas2d.classList.remove('hidden');
-            document.getElementById('btn-toggle-view').textContent = '3D View';
-        }
-        
+        this.setView(this.currentView === '2d' ? '3d' : '2d');
+    }
+
+    /**
+     * Show the 2D or the 3D view
+     * @param {string} view - '2d' | '3d'
+     */
+    setView(view) {
+        this.currentView = view === '3d' ? '3d' : '2d';
+        const is3d = this.currentView === '3d';
+        this.canvas2d.classList.toggle('hidden', is3d);
+        this.canvas3d.classList.toggle('hidden', !is3d);
+        this.canvas3dOverlay.classList.toggle('hidden', !is3d);
+        // The pages' own markup has one toggle button; the viewer layout two
+        const toggle = document.getElementById('btn-toggle-view');
+        if (toggle) toggle.textContent = is3d ? '2D View' : '3D View';
+        const b2 = document.getElementById('view-2d'), b3 = document.getElementById('view-3d');
+        if (b2) b2.setAttribute('aria-pressed', String(!is3d));
+        if (b3) b3.setAttribute('aria-pressed', String(is3d));
+        if (is3d) this.mouseOverView = false;
+
         // Update zoom slider to reflect current view's zoom
         this.updateZoomSlider();
     }
@@ -2545,7 +3103,8 @@ class Controller {
     updateZoomSlider() {
         const slider = document.getElementById('zoom-slider');
         const display = document.getElementById('zoom-value');
-        
+        if (!slider && !display) return;
+
         let relativeZoom;
         if (this.currentView === '2d') {
             // Relative to initial fit-to-bounds zoom
@@ -2555,8 +3114,9 @@ class Controller {
             relativeZoom = this.camera.initialOrthoScale / this.camera.targetOrthoScale;
         }
         
-        slider.value = relativeZoom;
-        display.textContent = Math.round(relativeZoom * 100) + '%';
+        if (!isFinite(relativeZoom)) relativeZoom = 1;
+        if (slider) slider.value = relativeZoom;
+        if (display) display.textContent = Math.round(relativeZoom * 100) + '%';
     }
 
     /**
@@ -2578,6 +3138,12 @@ class Controller {
      * Switch mobile tab
      */
     switchMobileTab(tabName) {
+        if (this.ui) {
+            // Older tab names: settings / display / gcode
+            const tab = { settings: 'job', display: 'view', gcode: 'code' }[tabName] || tabName;
+            ViewerUI.setTab(tab);
+            return;
+        }
         // Update tab buttons
         document.querySelectorAll('.mobile-tab-button').forEach(btn => {
             btn.classList.toggle('active', btn.getAttribute('data-tab') === tabName);
@@ -2615,10 +3181,10 @@ class Controller {
     }
 }
 
-// Initialize on page load (only for standalone viewer, not font-creator)
+// Initialize on page load: only the standalone viewer. Other hosts (FluidNC, VS Code,
+// FigUI) create their own controller, and the Font Creator creates one for its preview.
 window.addEventListener('DOMContentLoaded', () => {
-    // Check if this is the font-creator page by looking for the text-to-gcode tab
-    if (!document.getElementById('text-to-gcode')) {
+    if (document.body.dataset.host === 'standalone') {
         new Controller();
     }
 });

@@ -496,14 +496,14 @@ class Renderer3D {
         // Draw grid
         this.drawGrid(mvp);
         
-        // Draw coordinate axes
-        this.drawAxes(mvp);
-        
+        // Draw coordinate axes (showAxes / showToolMarker: the viewer's View options)
+        if (this.showAxes !== false) this.drawAxes(mvp);
+
         // Touch plate while probing
         this.drawProbePlate(mvp);
 
         // Draw current position marker
-        this.drawCurrentPositionMarker(mvp);
+        if (this.showToolMarker !== false) this.drawCurrentPositionMarker(mvp);
         
         // Draw grid labels on overlay
         this.drawGridLabels(mvp);

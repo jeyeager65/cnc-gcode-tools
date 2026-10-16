@@ -96,13 +96,14 @@ class Renderer2D {
         
         this.drawGrid(transform);
         this.drawSegments();
-        this.drawCurrentPositionMarker();
-        
+        // showToolMarker / showAxes: the viewer's View options (on unless turned off)
+        if (this.showToolMarker !== false) this.drawCurrentPositionMarker();
+
         this.ctx.restore();
-        
+
         // Draw grid labels after restoring transform (in screen space)
         this.drawGridLabels(transform);
-        
+
         this.drawCoordinateAxes();
     }
 
@@ -180,6 +181,7 @@ class Renderer2D {
         }
         
         // Draw origin
+        if (this.showAxes === false) return;
         this.ctx.strokeStyle = theme === 'dark' ? '#666666' : '#999999';
         this.ctx.lineWidth = 2 / zoom;
         

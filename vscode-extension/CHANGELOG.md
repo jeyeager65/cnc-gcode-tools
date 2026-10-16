@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Viewer: new layout. It opens in 3D, with a transport bar under the view (scrub bar with tool-change and M0 marks, speed menu, keyboard shortcuts), the view's own toolbar (2D/3D, Fit, view settings, zoom buttons) and a compact sidebar (summary, toolpaths with the rapids and Z layers, stock simulation, warnings). The G-code pane can be shown beside the view. Narrow panels get a tabbed phone layout.
+
 - Viewer: the animation plays in real time (1x), from each move's estimated time, with a 0.1x to 500x speed range. Probes are shown descending onto a touch plate, with an optional close-up view.
 
 - Viewer: the animation shows `(MSG, …)` and `(PRINT, …)` messages (with parameter values) as a controller UI would, can stop at each `M0` with its prompt, and simulates Z probing against the stock with the `P` plate thickness. Expanding a parametric file fills in the values in `(PRINT, …)` and `(DEBUG, …)` comments.

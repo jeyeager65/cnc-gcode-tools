@@ -35,10 +35,10 @@ $SrcJsDir  = Join-Path $PSScriptRoot "..\src\js"
 $SrcCssDir = Join-Path $PSScriptRoot "..\src\css"
 $ViewerDir = Join-Path $TargetDir "viewer"
 New-Item -ItemType Directory -Force -Path $ViewerDir | Out-Null
-'gcode-expander.js','parser.js','camera.js','renderer2d.js','stock-sim.js','renderer3d.js','animator.js','controller.js' | ForEach-Object {
+'prefs.js','viewer-ui.js','gcode-expander.js','parser.js','camera.js','renderer2d.js','stock-sim.js','renderer3d.js','animator.js','controller.js' | ForEach-Object {
     Copy-Item (Join-Path $SrcJsDir $_) $ViewerDir -Force
 }
-Copy-Item (Join-Path $SrcCssDir "common.css") $ViewerDir -Force
+"common.css","viewer.css" | ForEach-Object { Copy-Item (Join-Path $SrcCssDir $_) $ViewerDir -Force }
 Write-Host "Copied viewer files to: $ViewerDir" -ForegroundColor Cyan
 
 Write-Host "`nInstalled successfully!" -ForegroundColor Green
