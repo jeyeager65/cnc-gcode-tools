@@ -59,29 +59,26 @@ class Animator {
     }
 
     /**
-     * Calculate cumulative distances for distance-based animation
+     * Build the animation timeline from the move times
      */
     calculateDistances() {
-        this.segmentDistances = [];
-        let totalDistance = 0;
-        
-        for (let i = 0; i < this.segments.length; i++) {
-            const seg = this.segments[i];
-            
-            // Only count cutting moves, skip rapid moves (they'll be instant)
-            if (seg.type === 'cut') {
-                const dx = seg.end.x - seg.start.x;
-                const dy = seg.end.y - seg.start.y;
-                const dz = seg.end.z - seg.start.z;
-                const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                
-                totalDistance += distance;
-            }
-            
-            this.segmentDistances.push(totalDistance);
+        // The animation plays each move in its estimated time (calculateTotalTime), so 1x
+        // is real time. segmentEndTimes[i] is when move i ends, in seconds.
+        const n = this.segments.length;
+        this.segmentEndTimes = new Float64Array(n);
+        let time = 0;
+        for (let i = 0; i < n; i++) {
+            time += this.segmentMoveTimes ? this.segmentMoveTimes[i] : 0;
+            this.segmentEndTimes[i] = time;
         }
-        
-        this.totalDistance = totalDistance;
+        this.totalAnimTime = time;
+    }
+
+    /**
+     * Time at which move `index` starts on the animation timeline
+     */
+    segmentStartTime(index) {
+        return index > 0 && this.segmentEndTimes ? this.segmentEndTimes[Math.min(index, this.segments.length) - 1] : 0;
     }
 
     /**
@@ -90,6 +87,8 @@ class Animator {
     calculateTotalTime() {
         this.estimatedTotalTime = 0;
         this.toolTimes.clear();
+        // Each move's own time, without tool change allowances (the animation timeline)
+        this.segmentMoveTimes = new Float64Array(this.segments.length);
         
         for (let i = 0; i < this.segments.length; i++) {
             const seg = this.segments[i];
@@ -98,17 +97,10 @@ class Animator {
             
             let segmentTime = 0;
             
-            // Add tool change time if this segment has a tool change
-            if (seg.toolChangeType === 'M0') {
-                segmentTime += this.manualToolChangeTime;
-            } else if (seg.toolChangeType === 'M6') {
-                segmentTime += this.autoToolChangeTime;
-            }
-            
             // Calculate move time based on type with junction velocities
             if ((seg.type === 'cut' || seg.type === 'probe') && seg.feedRate > 0) {
-                // Probe moves run at the feed rate; counting their full travel gives
-                // an upper bound, since they stop at contact
+                // Probe moves run at the feed rate. Simulated ones end at contact; others
+                // are their full travel, an upper bound
                 const feedRate = seg.feedRate;
                 const prevFeedRate = prevSeg && prevSeg.type === 'cut' ? prevSeg.feedRate : 0;
                 const nextFeedRate = nextSeg && nextSeg.type === 'cut' ? nextSeg.feedRate : 0;
@@ -158,6 +150,15 @@ class Animator {
                 }
             }
             
+            this.segmentMoveTimes[i] = segmentTime;
+
+            // Add tool change time if this segment has a tool change
+            if (seg.toolChangeType === 'M0') {
+                segmentTime += this.manualToolChangeTime;
+            } else if (seg.toolChangeType === 'M6') {
+                segmentTime += this.autoToolChangeTime;
+            }
+
             this.estimatedTotalTime += segmentTime;
             
             // Track per-tool time (only for cutting moves)
@@ -343,6 +344,13 @@ class Animator {
      */
     play() {
         if (this.segments.length === 0) return;
+        // Carry on from the current position (it may have been moved by stepping or the
+        // slider since playback last ran)
+        if (this.currentIndex >= this.segments.length) this.currentIndex = 0;
+        const index = Math.floor(this.currentIndex);
+        const start = this.segmentStartTime(index);
+        const end = index < this.segments.length ? this.segmentEndTimes[index] : start;
+        if (!(this.accumulatedTime >= start && this.accumulatedTime <= end)) this.accumulatedTime = start;
         
         this.isPlaying = true;
         this.lastTime = performance.now();
@@ -370,23 +378,19 @@ class Animator {
     }
 
     /**
-     * Set playback speed (0.1x to 10x)
+     * Set playback speed, as a multiple of real time (0.1x to 500x)
      */
     setSpeed(speed) {
-        this.speed = Math.max(0.1, Math.min(10, speed));
+        this.speed = Math.max(0.1, Math.min(500, speed));
     }
 
     /**
      * Get speed from slider value (-10 to 10)
      */
     static sliderToSpeed(value) {
-        // Logarithmic scale
-        if (value === 0) return 1;
-        if (value > 0) {
-            return 1 + (value / 10) * 9; // 1x to 10x
-        } else {
-            return 1 + (value / 10) * 0.9; // 0.1x to 1x
-        }
+        // 1x is real time. Exponential, so the slider covers 0.1x (-10) to 500x (10)
+        if (value >= 0) return Math.pow(500, value / 10);
+        return Math.pow(10, value / 10);
     }
 
     /**
@@ -440,65 +444,40 @@ class Animator {
         const deltaTime = (currentTime - this.lastTime) / 1000; // Convert to seconds
         this.lastTime = currentTime;
         
-        // Distance-based animation for constant visual speed
-        if (this.totalDistance > 0) {
-            // Use a constant visual speed (adjust this to control animation speed)
-            const visualSpeed = 100 * this.speed; // mm/s visual speed (reduced from 500 for more reasonable animation speed)
-            const distanceToTravel = visualSpeed * deltaTime;
-            
-            this.accumulatedTime += distanceToTravel;
-            
-            // Find segment based on accumulated distance
-            const targetDistance = this.accumulatedTime;
-            let targetIndex = 0;
-            
-            // Binary search for efficiency
+        // Each move takes its estimated time (1x = real time)
+        if (this.totalAnimTime > 0) {
+            this.accumulatedTime += deltaTime * this.speed;
+            const targetTime = this.accumulatedTime;
+
+            // The move in progress: the first that ends after targetTime
             let left = 0;
-            let right = this.segmentDistances.length - 1;
-            
+            let right = this.segmentEndTimes.length - 1;
             while (left < right) {
                 const mid = Math.floor((left + right) / 2);
-                if (this.segmentDistances[mid] < targetDistance) {
+                if (this.segmentEndTimes[mid] <= targetTime) {
                     left = mid + 1;
                 } else {
                     right = mid;
                 }
             }
-            
-            targetIndex = left;
-            
-            // Calculate progress within the current segment
-            if (targetIndex < this.segments.length) {
-                const seg = this.segments[targetIndex];
-                const segStartDistance = targetIndex > 0 ? this.segmentDistances[targetIndex - 1] : 0;
-                const segEndDistance = this.segmentDistances[targetIndex];
-                const segTotalDistance = segEndDistance - segStartDistance;
-                
-                if (seg.type === 'cut' && segTotalDistance > 0) {
-                    // Calculate progress (0-1) within this segment
-                    const distanceIntoSegment = targetDistance - segStartDistance;
-                    this.segmentProgress = Math.min(1, Math.max(0, distanceIntoSegment / segTotalDistance));
-                } else {
-                    // Rapid moves or zero-distance moves are instant
-                    this.segmentProgress = 1;
-                }
-            } else {
-                this.segmentProgress = 1;
-            }
-            
-            const indexChanged = targetIndex !== this.currentIndex;
+            const targetIndex = left;
+
+            // How far through it
+            const segStart = this.segmentStartTime(targetIndex);
+            const segTime = this.segmentEndTimes[targetIndex] - segStart;
+            this.segmentProgress = segTime > 0 ? Math.min(1, Math.max(0, (targetTime - segStart) / segTime)) : 1;
             this.currentIndex = targetIndex;
-            
+
             if (this.onUpdate) {
                 this.onUpdate(this.currentIndex, this.segmentProgress);
             }
-            
+
             // Check if finished
-            if (this.accumulatedTime >= this.totalDistance) {
+            if (this.accumulatedTime >= this.totalAnimTime) {
                 this.currentIndex = this.segments.length;
                 this.segmentProgress = 1;
                 this.isPlaying = false;
-                
+
                 if (this.onUpdate) {
                     this.onUpdate(this.currentIndex, 1);
                 }

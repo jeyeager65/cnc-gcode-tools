@@ -35,7 +35,7 @@ $SrcJsDir  = Join-Path $PSScriptRoot "..\src\js"
 $SrcCssDir = Join-Path $PSScriptRoot "..\src\css"
 $ViewerDir = Join-Path $TargetDir "viewer"
 New-Item -ItemType Directory -Force -Path $ViewerDir | Out-Null
-'gcode-expander.js','parser.js','camera.js','renderer2d.js','renderer3d.js','animator.js','controller.js' | ForEach-Object {
+'gcode-expander.js','parser.js','camera.js','renderer2d.js','stock-sim.js','renderer3d.js','animator.js','controller.js' | ForEach-Object {
     Copy-Item (Join-Path $SrcJsDir $_) $ViewerDir -Force
 }
 Copy-Item (Join-Path $SrcCssDir "common.css") $ViewerDir -Force

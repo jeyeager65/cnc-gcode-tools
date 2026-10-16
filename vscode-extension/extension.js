@@ -193,6 +193,7 @@ function getViewerHtml(webview, context, filename, theme) {
     const parserUri     = viewerUri('parser.js');
     const cameraUri     = viewerUri('camera.js');
     const renderer2dUri = viewerUri('renderer2d.js');
+    const stockSimUri   = viewerUri('stock-sim.js');
     const renderer3dUri = viewerUri('renderer3d.js');
     const animatorUri   = viewerUri('animator.js');
     const controllerUri = viewerUri('controller.js');
@@ -377,6 +378,7 @@ function getViewerHtml(webview, context, filename, theme) {
 <script src="${parserUri}"></script>
 <script src="${cameraUri}"></script>
 <script src="${renderer2dUri}"></script>
+<script src="${stockSimUri}"></script>
 <script src="${renderer3dUri}"></script>
 <script src="${animatorUri}"></script>
 <script src="${controllerUri}"></script>
@@ -405,8 +407,23 @@ function getViewerHtml(webview, context, filename, theme) {
     return;
   }
 
+  // Earlier jobs for the stock simulation: the extension reads them from the file's folder
+  const priorRequests = new Map();
+  let priorRequestId = 0;
+  ctrl.readPriorJob = (name) => new Promise(resolve => {
+    const id = ++priorRequestId;
+    priorRequests.set(id, resolve);
+    vscode.postMessage({ command: 'readPriorJob', id, name });
+  });
+
   window.addEventListener('message', event => {
     const msg = event.data;
+    if (msg && msg.command === 'priorJob') {
+      const resolve = priorRequests.get(msg.id);
+      priorRequests.delete(msg.id);
+      if (resolve) resolve(typeof msg.text === 'string' ? msg.text : null);
+      return;
+    }
     log('postMessage received: ' + (msg && msg.command) + (msg && msg.gcode ? ' (' + msg.gcode.length + ' chars)' : ''));
     if (msg && msg.command === 'loadGCode') {
       log('Calling loadGCodeFromString...');
@@ -973,6 +990,12 @@ function activate(context) {
         panel.webview.onDidReceiveMessage(msg => {
             if (msg.command === 'ready') {
                 panel.webview.postMessage({ command: 'loadGCode', gcode: gcodeText, machineValues: loadMachineConfig(doc) });
+            } else if (msg.command === 'readPriorJob') {
+                // A file named by a (PriorJob: ...) comment, from the same folder only
+                const file = path.join(path.dirname(doc.fileName), path.basename(String(msg.name)));
+                fs.promises.readFile(file, 'utf8')
+                    .catch(() => null)
+                    .then(text => panel.webview.postMessage({ command: 'priorJob', id: msg.id, text }));
             }
         }, undefined, context.subscriptions);
     });

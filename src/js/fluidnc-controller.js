@@ -267,6 +267,7 @@ class FluidNCController extends Controller {
             
             widthInput.value = Math.round(width);
             heightInput.value = Math.round(height);
+            this.gridFromMachine = true; // the real bed: not sized from the stock
             
             // Trigger input events so the renderers pick up the change
             widthInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -428,6 +429,7 @@ class FluidNCController extends Controller {
             progressFill.style.width = '0%';
 
             // Process the GCode content using existing loadFile logic
+            this.loadingFilePath = file.path; // folder for earlier jobs (readPriorJob)
             await this.processGCode(content, file.name);
             
             // Store current file path, cache file, and clear any previous execution state
@@ -503,6 +505,25 @@ class FluidNCController extends Controller {
     }
 
     /**
+     * Earlier jobs for the stock simulation are read from the SD card folder of the file
+     * being previewed, only while the machine is Idle
+     */
+    async readPriorJob(name) {
+        const current = this.loadingFilePath || this.currentFilePath;
+        if (!current) return null;
+        if (this.machineState && this.machineState !== 'Idle') {
+            console.log('[FluidNC] Not reading earlier jobs while', this.machineState);
+            return null;
+        }
+        const folder = current.slice(0, current.lastIndexOf('/')) || '/';
+        // A download of a missing file gets no reply, so check the folder first
+        const wanted = name.split(/[\\/]/).pop().toLowerCase();
+        const files = await this.fluidAPI.listSDFiles(folder);
+        const file = files.find(f => f.type === 'file' && f.name.toLowerCase() === wanted);
+        return file ? this.fluidAPI.readSDFile(file.path) : null;
+    }
+
+    /**
      * Re-expand and redraw the current file (after entering outside values)
      */
     reloadCurrentGCode() {
@@ -561,6 +582,8 @@ class FluidNCController extends Controller {
             this.updateStatistics();
             this.displayGCode(text);
             this.updateToolPanel();
+            this.setupStockSimulation();
+            this.setupSimEvents();
             document.getElementById('animation-panel').style.display = 'block';
             const gcodePanel = document.getElementById('gcode-panel');
             gcodePanel.style.display = 'block';
@@ -612,7 +635,7 @@ class FluidNCController extends Controller {
                 }
                 
                 console.log('FluidNC: Fitting to bounds with canvas size:', width, 'x', height);
-                this.camera.fitToBounds(bounds, 0.1, width, height);
+                this.camera.fitToBounds(this.viewBounds(), 0.1, width, height);
                 this.updateZoomSlider();
             };
             
@@ -710,7 +733,7 @@ class FluidNCController extends Controller {
                 const width = canvas.clientWidth || canvas.width;
                 const height = canvas.clientHeight || canvas.height;
                 console.log('Refitting camera with canvas size:', width, 'x', height);
-                this.camera.fitToBounds(this.bounds, 0.1, width, height);
+                this.camera.fitToBounds(this.viewBounds(), 0.1, width, height);
             }, 100);
             
             // Set total time estimate
@@ -955,7 +978,7 @@ class FluidNCController extends Controller {
                 const width = this.canvas2d.width || this.canvas2d.clientWidth;
                 const height = this.canvas2d.height || this.canvas2d.clientHeight;
                 console.log('FluidNC: Refitting on tab switch with canvas size:', width, 'x', height);
-                this.camera.fitToBounds(this.bounds, 0.1, width, height);
+                this.camera.fitToBounds(this.viewBounds(), 0.1, width, height);
                 this.updateZoomSlider();
             }, 100);
         }
@@ -1133,6 +1156,7 @@ class FluidNCController extends Controller {
             
             // Parse the cached file
             const filename = state.filePath.split('/').pop();
+            this.loadingFilePath = state.filePath;
             await this.processGCode(cached.content, filename);
             
             // Restore viewer settings

@@ -133,6 +133,7 @@ class Controller {
             status.title = config ? 'Used for #</...> config values in parametric files' : '';
         }
         if (clear) clear.classList.toggle('hidden', !config);
+        this.updateGridSize();
 
         if (reload && this.gcodeText && this.parser.expansion) {
             this.loadGCodeFromString(this.gcodeText);
@@ -334,7 +335,7 @@ class Controller {
         if (btnResetView) {
             btnResetView.addEventListener('click', () => {
                 if (this.segments.length > 0) {
-                    this.camera.fitToBounds(this.bounds, 0.1, this.canvas2d.width, this.canvas2d.height);
+                    this.camera.fitToBounds(this.viewBounds(), 0.1, this.canvas2d.width, this.canvas2d.height);
                     this.updateZoomSlider();
                 }
             });
@@ -467,12 +468,16 @@ class Controller {
             themeLightBtn.addEventListener('click', () => {
                 document.documentElement.setAttribute('data-theme', 'light');
                 localStorage.setItem('theme', 'light');
+                // Toolpath colors depend on the theme and are built into the buffers
+                this.updateRenderers();
                 this.render();
             });
             
             themeDarkBtn.addEventListener('click', () => {
                 document.documentElement.setAttribute('data-theme', 'dark');
                 localStorage.setItem('theme', 'dark');
+                // Toolpath colors depend on the theme and are built into the buffers
+                this.updateRenderers();
                 this.render();
             });
         }
@@ -485,18 +490,15 @@ class Controller {
             });
         }
         
-        const gridWidth = document.getElementById('grid-width');
-        if (gridWidth) {
-            gridWidth.addEventListener('input', () => {
-                // Render loop will automatically pick up the change
-            });
-        }
-        
-        const gridHeight = document.getElementById('grid-height');
-        if (gridHeight) {
-            gridHeight.addEventListener('input', () => {
-                // Render loop will automatically pick up the change
-            });
+        // The render loop picks up grid size changes. One typed in by hand is kept rather
+        // than sized from the machine or the stock (see updateGridSize).
+        for (const id of ['grid-width', 'grid-height']) {
+            const input = document.getElementById(id);
+            if (input) {
+                input.addEventListener('input', (e) => {
+                    if (e.isTrusted) this.gridUserSet = true;
+                });
+            }
         }
         
         // Rapid moves (G0) controls
@@ -599,7 +601,7 @@ class Controller {
         
         const onDoubleClick = () => {
             if (this.bounds) {
-                this.camera.fitToBounds(this.bounds);
+                this.camera.fitToBounds(this.viewBounds());
             }
         };
         
@@ -727,6 +729,8 @@ class Controller {
      */
     setupAnimator() {
         this.animator.onUpdate = (index, segmentProgress = 1) => {
+            // Messages and M0 prompts, as a controller UI shows them (may stop at an M0)
+            ({ index, segmentProgress } = this.handleSimEvents(index, segmentProgress));
             this.renderer2d.setMaxSegmentIndex(index, segmentProgress);
             this.renderer3d.setMaxSegmentIndex(index, segmentProgress);
             
@@ -737,8 +741,10 @@ class Controller {
             if (index < this.segments.length) {
                 const segment = this.segments[index];
                 this.currentPosition = { x: segment.x1, y: segment.y1, z: segment.z1 };
-                this.gcodeCurrentSegmentLine = segment.lineNum;
-                const displayLine = this.toDisplayLine(segment.lineNum);
+                // Stopped at an M0: its line, not the next move's
+                const lineNum = this.simPromptAt !== null && this.simPromptLine ? this.simPromptLine : segment.lineNum;
+                this.gcodeCurrentSegmentLine = lineNum;
+                const displayLine = this.toDisplayLine(lineNum);
                 this.highlightGCodeLine(displayLine);
                 document.getElementById('current-file-line').textContent = displayLine || '-';
                 
@@ -755,6 +761,249 @@ class Controller {
             const playBtn = document.getElementById('btn-play');
             playBtn.textContent = this.animator.getIsPlaying() ? 'Pause' : 'Play';
         };
+    }
+
+    /**
+     * Messages and program stops from the parser (parser.events: MSG, PRINT, probe results,
+     * M0, M2/M30), shown over the canvas as the animation reaches them, like a controller UI
+     * such as FluidTouch or the WebUI. Call after a new file's segments are set.
+     */
+    setupSimEvents() {
+        // DEBUG messages only appear at FluidNC's debug log level
+        this.simEvents = (this.parser.events || []).filter(e => e.kind !== 'debug');
+        this.simPauses = [];
+        this.simEvents.forEach((e, pos) => { if (e.kind === 'pause') this.simPauses.push({ index: e.index, pos }); });
+        this.simPauseNext = 0;
+        this.simShownCount = -1;
+
+        // Simulated probes: from the M0 that asks for the plate (the probe's own position)
+        // until the next M0 soon after (taking it away), or the retract
+        this.probeWindows = [];
+        this.segments.forEach((seg, i) => {
+            if (seg.type !== 'probe' || !seg.probe) return;
+            const remove = this.simPauses.find(p => p.index > i && p.index <= i + 3);
+            this.probeWindows.push({ start: i, end: remove ? remove.index : i + 2, seg });
+        });
+        this.probeCamera = null;
+        this.probing = false;
+        this.renderer3d.setProbePlate(null);
+
+        const ui = this.getSimUI();
+        if (!ui) return;
+        this.hideSimPrompt();
+        ui.options.style.display = this.simEvents.length > 0 ? '' : 'none';
+        // After loading, the whole job is drawn
+        this.updateSimMessages(this.segments.length);
+    }
+
+    /**
+     * Message console and M0 prompt over the canvas, and their options in the Animation panel
+     */
+    getSimUI() {
+        if (this.simUI) return this.simUI;
+        const container = this.canvas3d ? this.canvas3d.parentElement : null;
+        const animation = document.querySelector('#animation-panel .animation-controls');
+        if (!container || !animation) return null;
+
+        const console_ = document.createElement('div');
+        console_.className = 'sim-console';
+        const prompt = document.createElement('div');
+        prompt.className = 'sim-prompt hidden';
+        prompt.innerHTML = '<div class="sim-prompt-title">⏸ Program paused (M0)</div>' +
+            '<div class="sim-prompt-text"></div><button type="button">Resume</button>';
+        container.appendChild(console_);
+        container.appendChild(prompt);
+
+        const options = document.createElement('div');
+        options.className = 'sim-options';
+        options.innerHTML =
+            '<label title="MSG and PRINT messages, probe results and program stops, as a controller UI shows them">' +
+            '<input type="checkbox" id="sim-show-messages"> Show messages</label>' +
+            '<label title="Stop at each M0 and show its prompt with the last message, until Resume">' +
+            '<input type="checkbox" id="sim-pause-m0"> Stop at M0 pauses</label>' +
+            '<label title="While playing, move the 3D view in close on each probe, then back">' +
+            '<input type="checkbox" id="sim-probe-closeup"> Close-up on probing</label>';
+        animation.appendChild(options);
+
+        const pref = (key, fallback) => {
+            try { const v = localStorage.getItem(key); return v === null ? fallback : v === 'true'; } catch (e) { return fallback; }
+        };
+        const showMessages = options.querySelector('#sim-show-messages');
+        const pauseAtM0 = options.querySelector('#sim-pause-m0');
+        const probeCloseUp = options.querySelector('#sim-probe-closeup');
+        showMessages.checked = pref('simShowMessages', true);
+        pauseAtM0.checked = pref('simPauseAtM0', true);
+        probeCloseUp.checked = pref('simProbeCloseUp', true);
+        const save = (key, value) => { try { localStorage.setItem(key, String(value)); } catch (e) { /* storage unavailable */ } };
+        showMessages.addEventListener('change', () => {
+            save('simShowMessages', showMessages.checked);
+            this.simShownCount = -1;
+            this.updateSimMessages(this.simShownIndex || 0);
+        });
+        pauseAtM0.addEventListener('change', () => {
+            save('simPauseAtM0', pauseAtM0.checked);
+            if (!pauseAtM0.checked && this.simPromptAt !== null) this.resumeSim();
+        });
+        probeCloseUp.addEventListener('change', () => {
+            save('simProbeCloseUp', probeCloseUp.checked);
+            if (!probeCloseUp.checked) this.restoreProbeCamera();
+        });
+        prompt.querySelector('button').addEventListener('click', () => this.resumeSim());
+
+        this.simUI = { console: console_, prompt, options, showMessages, pauseAtM0, probeCloseUp };
+        return this.simUI;
+    }
+
+    /**
+     * Called with each animation position: while playing, stops at the next M0 (if that
+     * option is on); otherwise (seeking, stepping) works out which M0 comes next.
+     * Returns the position to show, which is the M0's when it stopped there.
+     */
+    handleSimEvents(index, segmentProgress) {
+        if (!this.simEvents || this.simEvents.length === 0) return { index, segmentProgress };
+        const ui = this.simUI;
+        const playing = this.animator.getIsPlaying();
+        if (playing) {
+            while (this.simPauseNext < this.simPauses.length && this.simPauses[this.simPauseNext].index <= index) {
+                const pause = this.simPauses[this.simPauseNext++];
+                if (ui && ui.pauseAtM0.checked) {
+                    this.pauseAnimatorAt(pause.index);
+                    index = pause.index;
+                    segmentProgress = 0;
+                    this.showSimPrompt(pause);
+                    break;
+                }
+            }
+        } else {
+            // Pauses before this point are passed; one right here comes next
+            this.simPauseNext = this.simPauses.filter(p => p.index < index).length;
+            if (this.simPromptAt !== null && index !== this.simPromptAt) this.hideSimPrompt();
+        }
+        this.updateSimMessages(index);
+        this.updateProbeView(index, playing);
+        return { index, segmentProgress };
+    }
+
+    /**
+     * The touch plate while a probe is in progress (from the M0 that asks for it until the
+     * one that takes it away), and, while playing, a close-up of it that returns to the
+     * previous view afterwards
+     */
+    updateProbeView(index, playing) {
+        const w = (this.probeWindows || []).find(w => index >= w.start &&
+            (index < w.end || (index === w.end && this.simPromptAt === w.end)));
+        this.probing = !!w;
+        if (!w) {
+            this.renderer3d.setProbePlate(null);
+            this.restoreProbeCamera();
+            return;
+        }
+
+        const cfg = this.stockConfig;
+        const def = cfg && cfg.tools.get(w.seg.toolNumber);
+        const inches = (cfg ? cfg.units : this.parser.units) === 'inches';
+        const diameter = def && def.diameter > 0 ? def.diameter : (inches ? 0.25 : 6);
+        const size = Math.max(inches ? 1.2 : 30, diameter * 4);
+        const probe = w.seg.probe;
+        this.renderer3d.setProbePlate({
+            x: w.seg.end.x, y: w.seg.end.y, surface: probe.surface, thickness: probe.plate, size,
+            touched: index > w.start
+        });
+
+        const ui = this.simUI;
+        if (!this.probeCamera && playing && ui && ui.probeCloseUp.checked && this.currentView === '3d') {
+            const cam = this.camera;
+            this.probeCamera = {
+                target: { ...cam.targetTarget }, orientation: { ...cam.targetOrientation }, scale: cam.targetOrthoScale
+            };
+            const length = def && def.overallLength > 0 ? def.overallLength : diameter * 6;
+            cam.targetTarget = { x: w.seg.end.x, y: w.seg.end.y, z: probe.surface + length * 0.35 };
+            // A low view from the front: 65 degrees down from the top view
+            const tilt = 65 * Math.PI / 180;
+            cam.targetOrientation = { w: Math.cos(tilt / 2), x: Math.sin(tilt / 2), y: 0, z: 0 };
+            cam.targetOrthoScale = Math.max(size * 0.8, length * 0.7);
+        }
+    }
+
+    restoreProbeCamera() {
+        const saved = this.probeCamera;
+        if (!saved) return;
+        this.probeCamera = null;
+        const cam = this.camera;
+        cam.targetTarget = saved.target;
+        cam.targetOrientation = saved.orientation;
+        cam.targetOrthoScale = saved.scale;
+    }
+
+    /**
+     * Stop the animation exactly at the start of segment `index`, so it resumes from there
+     */
+    pauseAnimatorAt(index) {
+        const a = this.animator;
+        a.pause();
+        a.currentIndex = index;
+        a.segmentProgress = 0;
+        if (a.totalAnimTime > 0) {
+            a.accumulatedTime = a.segmentStartTime(index);
+        } else if (a.estimatedTotalTime > 0 && a.segments.length > 0) {
+            a.accumulatedTime = index / a.segments.length * a.estimatedTotalTime;
+        }
+    }
+
+    showSimPrompt(pause) {
+        const ui = this.simUI;
+        // The last message before the M0, as a controller UI shows with its pause prompt
+        let message = null;
+        for (let i = pause.pos - 1; i >= 0 && message === null; i--) {
+            const e = this.simEvents[i];
+            if (e.kind === 'msg' || e.kind === 'print') message = e.text;
+        }
+        ui.prompt.querySelector('.sim-prompt-text').textContent = message || 'No message';
+        ui.prompt.classList.remove('hidden');
+        this.simPromptAt = pause.index;
+        this.simPromptPos = pause.pos;
+        this.simPromptLine = this.simEvents[pause.pos].lineNum;
+        this.simPromptNext = this.simPauseNext;
+    }
+
+    hideSimPrompt() {
+        if (this.simUI) this.simUI.prompt.classList.add('hidden');
+        this.simPromptAt = null;
+        this.simPromptLine = null;
+    }
+
+    resumeSim() {
+        const next = this.simPromptNext;
+        this.hideSimPrompt();
+        this.simShownCount = -1;
+        if (next !== undefined) this.simPauseNext = next;
+        this.animator.play();
+    }
+
+    /**
+     * The last few events up to segment `index`, newest at the bottom. While stopped at an
+     * M0, only those up to it: what follows on the same position hasn't happened yet.
+     */
+    updateSimMessages(index) {
+        const ui = this.simUI;
+        if (!ui || !this.simEvents) return;
+        this.simShownIndex = index;
+        // Events are in order of index, so count those that have happened
+        let lo = 0, hi = this.simEvents.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (this.simEvents[mid].index <= index) lo = mid + 1; else hi = mid;
+        }
+        if (this.simPromptAt !== null && this.simPromptAt !== undefined) lo = Math.min(lo, this.simPromptPos + 1);
+        if (lo === this.simShownCount) return;
+        this.simShownCount = lo;
+
+        const shown = ui.showMessages.checked ? this.simEvents.slice(Math.max(0, lo - 3), lo) : [];
+        const labels = { msg: 'MSG', print: 'PRINT', probe: 'PRB', alarm: 'ALARM', pause: 'M0', end: 'END' };
+        ui.console.innerHTML = shown.map((e, i) =>
+            `<div class="sim-line sim-${e.kind}${i < shown.length - 1 ? ' sim-old' : ''}" title="Line ${e.lineNum}">` +
+            `<span class="sim-kind">${labels[e.kind] || e.kind}</span>${this.escapeHtml(e.text)}</div>`).join('');
+        ui.console.style.display = shown.length > 0 ? '' : 'none';
     }
 
     /**
@@ -799,6 +1048,8 @@ class Controller {
             this.updateStatistics();
             this.displayGCode(text);
             this.updateToolPanel();
+            this.setupStockSimulation();
+            this.setupSimEvents();
             this.initializeLayerSliders(); // Initialize layer filter sliders
             const gcodePanel = document.getElementById('gcode-panel');
             gcodePanel.style.visibility = 'visible';
@@ -886,6 +1137,10 @@ class Controller {
             this.updateStatistics(idPrefix);
             this.displayGCode(gcodeText, idPrefix);
             this.updateToolPanel(idPrefix);
+            if (!idPrefix) {
+                this.setupStockSimulation();
+                this.setupSimEvents();
+            }
             
             const gcodePanel = document.getElementById(`${idPrefix}gcode-panel`);
             if (gcodePanel) {
@@ -947,9 +1202,15 @@ class Controller {
      */
     detectTools(segments) {
         const toolSet = new Set();
+        // A ToolDef NAME= (stock simulation header) replaces the tool list's name
+        const defNames = new Map();
+        const defs = this.parser.simMeta ? this.parser.simMeta.tools : new Map();
         for (const seg of segments) {
             if (seg.type === 'cut') {
-                toolSet.add(seg.tool || 1);
+                const key = seg.tool || 1;
+                toolSet.add(key);
+                const def = defs.get(seg.toolNumber);
+                if (def && def.name && !defNames.has(key)) defNames.set(key, def.name);
             }
         }
         
@@ -972,7 +1233,7 @@ class Controller {
             this.tools.set(tool, {
                 visible: true,
                 color: customColor || defaultColor,
-                name: toolNames[toolIndex] || `Tool ${tool}`
+                name: defNames.get(tool) || toolNames[toolIndex] || `Tool ${tool}`
             });
         }
     }
@@ -1071,8 +1332,642 @@ class Controller {
         this.renderer3d.setRapidMoveSettings(this.rapidMovesVisible, this.rapidMoveColor);
         this.renderer2d.updateBuffers();
         this.renderer3d.updateBuffers();
+        if (this.stockSim) this.stockSim.setHiddenTools(this.hiddenToolKeys());
     }
-    
+
+    /**
+     * Tool panel keys of the tools that are unchecked
+     */
+    hiddenToolKeys() {
+        return [...this.tools].filter(([, state]) => !state.visible).map(([key]) => key);
+    }
+
+    /**
+     * Stock simulation: the machined stock drawn as a solid in the 3D view. Stock and
+     * tool sizes come from the file's (Stock: ...) / (ToolDef N: ...) header comments or
+     * are entered in the panel; until every tool's size is known the option stays off.
+     * Call after the segments and tools of a new file are set.
+     */
+    setupStockSimulation() {
+        if (typeof StockSimulator === 'undefined') return;
+        const panel = this.getStockPanel();
+        if (!panel) return;
+
+        const meta = this.parser.simMeta;
+        const units = meta.units || this.parser.units;
+
+        // T numbers of the tools that cut, named as in the tool panel
+        const names = new Map();
+        for (const seg of this.segments) {
+            if (seg.type !== 'cut' || names.has(seg.toolNumber)) continue;
+            const state = this.tools.get(seg.tool || 1);
+            names.set(seg.toolNumber, state && state.name ? state.name : `Tool ${seg.toolNumber}`);
+        }
+
+        this.stockSim = null;
+        this.renderer3d.setStockSimulator(null);
+        if (names.size === 0) {
+            panel.style.display = 'none';
+            this.stockConfig = null;
+            this.updateStockDisplay();
+            this.updateGridSize();
+            return;
+        }
+
+        const tools = new Map();
+        for (const [num, name] of names) {
+            const guess = guessStockToolFromName(name, units);
+            let def = meta.tools.get(num);
+            // The flute count, only used to draw the tool, can come from a name like "1-flute"
+            if (def && !def.flutes && guess && guess.flutes) def = { ...def, flutes: guess.flutes };
+            tools.set(num, def || guess ||
+                { shape: 'flat', diameter: null, angle: null, tip: 0, cornerRadius: 0, flutes: 0 });
+        }
+        const fromFile = !!meta.stock && [...names.keys()].every(num => meta.tools.has(num));
+        this.stockConfig = {
+            stock: meta.stock || this.estimateStock(tools, units),
+            tools, names, units, fromFile,
+            stockFromFile: !!meta.stock,
+            quality: this.stockConfig ? this.stockConfig.quality : 'auto'
+        };
+
+        let wantVisible = false;
+        try { wantVisible = localStorage.getItem('stockSimVisible') === 'true'; } catch (e) { /* storage unavailable */ }
+        this.stockVisible = wantVisible && fromFile;
+
+        // Jobs that run before this one (PriorJob comments), loaded where the host can
+        // read files next to this one; the rest are chosen with "Add files…"
+        this.priorJobs = meta.priorJobs.map(name => ({ name, status: 'pending', warnings: [] }));
+        this.priorJobsGeneration = (this.priorJobsGeneration || 0) + 1;
+
+        panel.style.display = 'block';
+        this.renderStockPanel();
+        this.renderPriorJobs();
+        this.updateStockDisplay();
+        this.updateGridSize();
+        // The file was fitted to its toolpaths; with the stock shown, frame that instead
+        if (this.stockVisible && this.stockConfigProblem() === null) {
+            this.camera.fitToBounds(this.viewBounds(), 0.1, this.canvas2d.width, this.canvas2d.height);
+            this.updateZoomSlider();
+        }
+        if (this.priorJobs.length > 0) this.autoLoadPriorJobs();
+    }
+
+    /**
+     * Read a file that runs before the current one, named by a PriorJob comment.
+     * Hosts that can read files next to the current one override this (FluidNC reads
+     * the SD card, the VS Code extension the file's folder). Returns the text or null.
+     */
+    async readPriorJob(name) {
+        return null;
+    }
+
+    async autoLoadPriorJobs() {
+        const generation = this.priorJobsGeneration;
+        for (const job of this.priorJobs) {
+            if (job.status !== 'pending') continue;
+            let text = null;
+            try {
+                text = await this.readPriorJob(job.name);
+            } catch (e) {
+                console.warn('Could not read earlier job', job.name, e);
+            }
+            if (generation !== this.priorJobsGeneration) return; // another file was loaded
+            if (typeof text === 'string') {
+                await this.parsePriorJob(job, text);
+                if (generation !== this.priorJobsGeneration) return;
+            } else {
+                job.status = 'missing';
+            }
+            this.renderPriorJobs();
+        }
+        this.priorJobsChanged();
+    }
+
+    /**
+     * Parse an earlier job and check it fits this one
+     */
+    async parsePriorJob(job, text) {
+        const parser = new GCodeParser();
+        parser.machineValues = this.parser.machineValues;
+        parser.inputValues = this.parser.inputValues;
+        job.warnings = [];
+        try {
+            job.segments = await parser.parseString(text);
+        } catch (e) {
+            job.status = 'error';
+            job.warnings = [`couldn't be read: ${e.message}`];
+            return;
+        }
+        const meta = parser.simMeta;
+        const cfg = this.stockConfig;
+        job.tools = meta.tools;
+        job.status = 'loaded';
+
+        const units = meta.units || parser.units;
+        if (cfg && units !== cfg.units) {
+            job.status = 'error';
+            job.warnings.push(`uses ${units} and this file uses ${cfg.units}, so it's left out`);
+            return;
+        }
+        const cutTools = [...new Set(job.segments.filter(s => s.type === 'cut').map(s => s.toolNumber))];
+        if (cutTools.length === 0) job.warnings.push('has no cutting moves');
+        const undefinedTools = cutTools.filter(num => !meta.tools.has(num));
+        if (undefinedTools.length > 0) {
+            job.warnings.push(`has no ToolDef for ${undefinedTools.map(n => 'T' + n).join(', ')}, so those cuts are left out`);
+        }
+        if (meta.stock && cfg && ['xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax']
+            .some(k => Math.abs(meta.stock[k] - cfg.stock[k]) > 1e-6)) {
+            job.warnings.push("has different Stock bounds; it's carved into this file's stock");
+        }
+        const listed = new Set(this.priorJobs.map(j => this.priorJobKey(j.name)));
+        const unlisted = meta.priorJobs.filter(name => !listed.has(this.priorJobKey(name)));
+        if (unlisted.length > 0) {
+            job.warnings.push(`runs after ${unlisted.join(', ')}, which ${unlisted.length === 1 ? "isn't" : "aren't"} in this list`);
+        }
+    }
+
+    priorJobKey(name) {
+        return name.split(/[\\/]/).pop().trim().toLowerCase();
+    }
+
+    /**
+     * Files chosen with "Add files…": each fills the listed job of the same name, or is
+     * added at the end (several at once in name order, e.g. _T1 before _T2)
+     */
+    async addPriorJobFiles(files) {
+        const generation = this.priorJobsGeneration;
+        const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+        for (const file of sorted) {
+            const text = await file.text();
+            if (generation !== this.priorJobsGeneration) return;
+            const key = this.priorJobKey(file.name);
+            let job = this.priorJobs.find(j => this.priorJobKey(j.name) === key);
+            if (!job) {
+                job = { name: file.name, status: 'pending', warnings: [] };
+                this.priorJobs.push(job);
+            }
+            await this.parsePriorJob(job, text);
+            if (generation !== this.priorJobsGeneration) return;
+        }
+        this.renderPriorJobs();
+        this.priorJobsChanged();
+    }
+
+    renderPriorJobs() {
+        const list = document.getElementById('stock-prior-list');
+        if (!list) return;
+        const jobs = this.priorJobs || [];
+        if (jobs.length === 0) {
+            list.innerHTML = '<li class="stock-prior-empty">None: the job starts from uncut stock.</li>';
+            return;
+        }
+        list.innerHTML = jobs.map((job, i) => {
+            const status = {
+                pending: 'Loading…',
+                missing: '⚠️ Not found: choose it with Add files…',
+                loaded: `✓ ${job.segments ? job.segments.length : 0} moves`,
+                error: '⚠️ Not used'
+            }[job.status];
+            const warnings = job.warnings.map(w => `<div class="stock-prior-warning">⚠️ It ${this.escapeHtml(w)}.</div>`).join('');
+            return `<li data-index="${i}">
+                <div class="stock-prior-row">
+                    <span class="stock-prior-name" title="${this.escapeHtml(job.name)}">${this.escapeHtml(job.name)}</span>
+                    <button type="button" data-action="up" title="Move earlier"${i === 0 ? ' disabled' : ''}>↑</button>
+                    <button type="button" data-action="remove" title="Remove">✕</button>
+                </div>
+                <div class="stock-prior-status">${status}</div>${warnings}
+            </li>`;
+        }).join('');
+    }
+
+    /**
+     * Rebuild the simulation after the earlier jobs changed
+     */
+    priorJobsChanged() {
+        this.stockSim = null;
+        this.renderer3d.setStockSimulator(null);
+        this.updateStockDisplay();
+    }
+
+    /**
+     * The Stock Simulation panel, added after the rapid moves panel on first use
+     */
+    getStockPanel() {
+        let panel = document.getElementById('stock-panel');
+        if (panel) return panel;
+        const anchor = document.getElementById('rapid-moves-panel') || document.getElementById('tool-panel');
+        if (!anchor) return null;
+
+        panel = document.createElement('div');
+        panel.className = 'panel';
+        panel.id = 'stock-panel';
+        panel.innerHTML = `
+            <h3>Stock Simulation</h3>
+            <div class="stock-status" id="stock-status"></div>
+            <label class="stock-check"><input type="checkbox" id="stock-visible"><span>Show machined stock (3D view)</span></label>
+            <label class="stock-check"><input type="checkbox" id="stock-paths" checked><span>Show toolpaths on the stock</span></label>
+            <label class="stock-check stock-sub" title="While animating, hide the lines of earlier layers: they're already cut into the stock"><input type="checkbox" id="stock-paths-layer"><span>Current layer only</span></label>
+            <div class="stock-info" id="stock-info"></div>
+            <div class="stock-priors">
+                <div class="stock-priors-head">
+                    <span title="Files that run before this one, oldest first. Their cuts are made before this job's.">Earlier jobs</span>
+                    <button type="button" id="stock-prior-add">Add files…</button>
+                </div>
+                <ol class="stock-prior-list" id="stock-prior-list"></ol>
+                <input type="file" id="stock-prior-input" multiple accept=".nc,.gcode,.ngc,.gco,.tap,.txt" hidden>
+            </div>
+            <details class="stock-settings" id="stock-settings">
+                <summary>Stock and tools</summary>
+                <div id="stock-form"></div>
+                <div class="stock-actions">
+                    <label>Detail
+                        <select id="stock-quality" title="Grid resolution: finer shows small details more accurately, but uses more memory and takes longer to carve">
+                            <option value="auto">Auto (from the tools)</option>
+                            <option value="500000">Draft (0.5M cells)</option>
+                            <option value="2000000">Normal (2M cells)</option>
+                            <option value="5000000">Fine (5M cells)</option>
+                            <option value="10000000">Ultra (10M cells)</option>
+                        </select>
+                    </label>
+                    <button type="button" id="stock-apply">Apply</button>
+                </div>
+                <div class="stock-help">Stock bounds are in the file's coordinates. A post processor can supply these with
+                    <code>(Stock: XMIN=… XMAX=… YMIN=… YMAX=… ZMIN=… ZMAX=…)</code> and
+                    <code>(ToolDef N: SHAPE=flat D=…)</code> comments.</div>
+            </details>`;
+        anchor.insertAdjacentElement('afterend', panel);
+
+        panel.querySelector('#stock-visible').addEventListener('change', (e) => {
+            this.stockVisible = e.target.checked;
+            try { localStorage.setItem('stockSimVisible', String(this.stockVisible)); } catch (err) { /* storage unavailable */ }
+            if (this.stockVisible && this.currentView === '2d') this.toggleView();
+            this.updateStockDisplay();
+        });
+        panel.querySelector('#stock-paths').addEventListener('change', () => this.updateStockDisplay());
+        const layerOnly = panel.querySelector('#stock-paths-layer');
+        try { layerOnly.checked = localStorage.getItem('stockPathsLayerOnly') !== 'false'; } catch (e) { layerOnly.checked = true; }
+        layerOnly.addEventListener('change', () => {
+            try { localStorage.setItem('stockPathsLayerOnly', String(layerOnly.checked)); } catch (e) { /* storage unavailable */ }
+            this.updateStockDisplay();
+        });
+        panel.querySelector('#stock-apply').addEventListener('click', () => this.applyStockForm());
+        const priorInput = panel.querySelector('#stock-prior-input');
+        panel.querySelector('#stock-prior-add').addEventListener('click', () => priorInput.click());
+        priorInput.addEventListener('change', () => {
+            if (priorInput.files.length > 0) this.addPriorJobFiles(priorInput.files);
+            priorInput.value = '';
+        });
+        panel.querySelector('#stock-prior-list').addEventListener('click', (e) => {
+            const button = e.target.closest('button[data-action]');
+            if (!button) return;
+            const index = parseInt(button.closest('li').dataset.index);
+            const jobs = this.priorJobs;
+            if (button.dataset.action === 'remove') jobs.splice(index, 1);
+            else if (index > 0) [jobs[index - 1], jobs[index]] = [jobs[index], jobs[index - 1]];
+            this.renderPriorJobs();
+            this.priorJobsChanged();
+        });
+        panel.querySelector('#stock-form').addEventListener('change', (e) => {
+            if (e.target.matches('select[data-field="shape"]')) this.updateStockToolFields(e.target.closest('.stock-tool'));
+        });
+        panel.querySelector('#stock-form').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.target.matches('input')) this.applyStockForm();
+        });
+        return panel;
+    }
+
+    renderStockPanel() {
+        const cfg = this.stockConfig;
+        const unit = cfg.units === 'inches' ? 'in' : 'mm';
+        const value = (v) => v === null || v === undefined ? '' : String(+v.toFixed(4));
+        const s = cfg.stock;
+        const shapes = { flat: 'Flat end mill', ball: 'Ball nose', bullnose: 'Bull nose', vbit: 'V-bit', chamfer: 'Chamfer', taperball: 'Tapered ball nose' };
+
+        let html = `<div class="stock-bounds"><span></span><span class="stock-head">Min (${unit})</span><span class="stock-head">Max (${unit})</span>`;
+        for (const axis of ['x', 'y', 'z']) {
+            html += `<span>${axis.toUpperCase()}</span>` +
+                `<input type="number" step="any" data-stock="${axis}min" value="${value(s[axis + 'min'])}">` +
+                `<input type="number" step="any" data-stock="${axis}max" value="${value(s[axis + 'max'])}">`;
+        }
+        html += '</div>';
+
+        for (const [num, def] of cfg.tools) {
+            const options = STOCK_TOOL_SHAPES.map(shape =>
+                `<option value="${shape}"${shape === def.shape ? ' selected' : ''}>${shapes[shape]}</option>`).join('');
+            html += `<div class="stock-tool" data-tool="${num}">
+                <div class="stock-tool-name" title="${this.escapeHtml(cfg.names.get(num))}">T${num} · ${this.escapeHtml(cfg.names.get(num))}</div>
+                <div class="stock-tool-fields">
+                    <label class="stock-shape">Shape<select data-field="shape">${options}</select></label>
+                    <label>Diameter (${unit})<input type="number" step="any" min="0" data-field="diameter" value="${value(def.diameter)}"></label>
+                    <label data-shapes="vbit chamfer taperball">Angle (°)<input type="number" step="any" min="0" max="179" data-field="angle" value="${value(def.angle)}"></label>
+                    <label data-shapes="vbit chamfer">Tip diameter (${unit})<input type="number" step="any" min="0" data-field="tip" value="${value(def.tip)}"></label>
+                    <label data-shapes="taperball">Ball diameter (${unit})<input type="number" step="any" min="0" data-field="tip" value="${value(def.tip)}"></label>
+                    <label data-shapes="bullnose">Corner radius (${unit})<input type="number" step="any" min="0" data-field="cornerRadius" value="${value(def.cornerRadius)}"></label>
+                    <label title="Only used to draw the tool">Flutes<input type="number" step="1" min="0" max="12" data-field="flutes" value="${def.flutes || ''}"></label>
+                    <label title="Cutting edge height from the tip: deeper cuts are flagged">Flute length (${unit})<input type="number" step="any" min="0" data-field="fluteLength" value="${value(def.fluteLength)}"></label>
+                    <label title="Only used to draw the tool">Overall length (${unit})<input type="number" step="any" min="0" data-field="overallLength" value="${value(def.overallLength)}"></label>
+                </div>
+            </div>`;
+        }
+        const form = document.getElementById('stock-form');
+        form.innerHTML = html;
+        form.querySelectorAll('.stock-tool').forEach(row => this.updateStockToolFields(row));
+
+        const qualitySelect = document.getElementById('stock-quality');
+        qualitySelect.value = String(cfg.quality);
+        if (qualitySelect.value !== String(cfg.quality)) qualitySelect.value = 'auto';
+        document.getElementById('stock-visible').checked = this.stockVisible;
+        // Open the form when something needs checking or filling in
+        document.getElementById('stock-settings').open = !cfg.fromFile;
+    }
+
+    updateStockToolFields(row) {
+        const shape = row.querySelector('select[data-field="shape"]').value;
+        row.querySelectorAll('label[data-shapes]').forEach(label => {
+            label.style.display = label.dataset.shapes.split(' ').includes(shape) ? '' : 'none';
+        });
+    }
+
+    applyStockForm() {
+        const cfg = this.stockConfig;
+        if (!cfg) return;
+        const form = document.getElementById('stock-form');
+        const read = (input) => {
+            const v = parseFloat(input.value);
+            return input.value.trim() === '' || !isFinite(v) ? null : v;
+        };
+
+        const stock = {};
+        form.querySelectorAll('input[data-stock]').forEach(input => { stock[input.dataset.stock] = read(input); });
+        const tools = new Map();
+        form.querySelectorAll('.stock-tool').forEach(row => {
+            // Some fields have a label per shape (tip vs ball diameter): use the one shown
+            const field = (name) => {
+                const inputs = [...row.querySelectorAll(`[data-field="${name}"]`)];
+                return inputs.find(el => !el.closest('label[data-shapes]') ||
+                    el.closest('label').style.display !== 'none') || inputs[0];
+            };
+            tools.set(parseInt(row.dataset.tool), {
+                shape: field('shape').value,
+                diameter: read(field('diameter')),
+                angle: read(field('angle')),
+                tip: read(field('tip')) || 0,
+                cornerRadius: read(field('cornerRadius')) || 0,
+                flutes: read(field('flutes')) || 0,
+                fluteLength: read(field('fluteLength')) || null,
+                overallLength: read(field('overallLength')) || null,
+                name: cfg.tools.get(parseInt(row.dataset.tool))?.name || null
+            });
+        });
+
+        // Estimated bounds that weren't changed are estimated again, as they include the
+        // tool radius, which may only just have been entered
+        const keys = ['xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax'];
+        const unchanged = keys.every(k => stock[k] !== null && Math.abs(stock[k] - cfg.stock[k]) < 1e-6);
+        if (!unchanged) cfg.stockEdited = true;
+        const reestimate = unchanged && !cfg.stockFromFile && !cfg.stockEdited;
+
+        cfg.tools = tools;
+        cfg.stock = reestimate ? this.estimateStock(tools, cfg.units) : stock;
+        const quality = document.getElementById('stock-quality').value;
+        cfg.quality = quality === 'auto' ? 'auto' : parseFloat(quality) || 'auto';
+        cfg.fromFile = false;
+        cfg.edited = true;
+        this.stockSim = null;
+        this.renderer3d.setStockSimulator(null);
+        if (reestimate) this.renderStockPanel();
+
+        this.updateGridSize();
+        if (this.stockConfigProblem() === null) {
+            this.stockVisible = true;
+            document.getElementById('stock-visible').checked = true;
+            try { localStorage.setItem('stockSimVisible', 'true'); } catch (e) { /* storage unavailable */ }
+            if (this.currentView === '2d') this.toggleView();
+        }
+        this.updateStockDisplay();
+    }
+
+    /**
+     * Why the current stock settings can't be simulated, or null if they can
+     */
+    stockConfigProblem() {
+        const cfg = this.stockConfig;
+        if (!cfg) return 'No cutting moves to simulate';
+        const s = cfg.stock;
+        if (['xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax'].some(k => s[k] === null || s[k] === undefined)) {
+            return 'Enter the stock bounds below';
+        }
+        if (!(s.xmax > s.xmin && s.ymax > s.ymin && s.zmax > s.zmin)) return 'Each stock max must be above its min';
+        for (const [num, def] of cfg.tools) {
+            if (!(def.diameter > 0)) return `Enter a diameter for T${num} below`;
+        }
+        return null;
+    }
+
+    /**
+     * Build the simulator if it's needed and pass the display options to the 3D view
+     */
+    updateStockDisplay() {
+        const problem = this.stockConfig ? this.stockConfigProblem() : null;
+        const visibleBox = document.getElementById('stock-visible');
+        const status = document.getElementById('stock-status');
+
+        if (this.stockConfig) {
+            if (visibleBox) visibleBox.disabled = problem !== null;
+            if (status) {
+                status.textContent = problem ? `✏️ ${problem} to simulate the cut.`
+                    : this.stockConfig.fromFile ? '✓ Stock and tools from the file header.'
+                    : this.stockConfig.edited ? 'Using the stock and tools entered below.'
+                    : this.stockConfig.stockFromFile ? 'Stock from the file header; tool sizes guessed from their names: check them below.'
+                    : 'Estimated from the toolpaths and tool names: check the stock and tools below.';
+            }
+        }
+
+        const visible = !!this.stockConfig && problem === null && this.stockVisible;
+        if (visible && !this.stockSim) {
+            const cfg = this.stockConfig;
+            const cells = cfg.quality === 'auto' ? this.autoStockCells(cfg) : cfg.quality;
+            const maxCells = Math.min(cells, this.renderer3d.stockMaxCells);
+            this.stockSim = new StockSimulator(cfg.stock, cfg.tools, { maxCells });
+            this.stockSim.setPriorJobs((this.priorJobs || []).filter(job => job.status === 'loaded'));
+            this.stockSim.setHiddenTools(this.hiddenToolKeys());
+            this.stockSim.setSegments(this.segments);
+            this.renderer3d.setStockSimulator(this.stockSim);
+            this.stockFluteWarnings = this.findFluteLengthProblems();
+            this.stockInfoText = null;
+        }
+
+        const paths = document.getElementById('stock-paths');
+        const layerOnly = document.getElementById('stock-paths-layer');
+        this.renderer3d.setStockDisplay(visible, paths ? paths.checked : true, layerOnly ? layerOnly.checked : false);
+        if (layerOnly) layerOnly.disabled = paths ? !paths.checked : false;
+        this.renderer3d.onStockProgress = visible ? (sim) => this.updateStockInfo(sim) : null;
+        if (!visible) this.setStockInfo('');
+    }
+
+    /**
+     * Cutting moves that go deeper below the stock top than their tool's flute length (LEN),
+     * where the shank would rub: [{ tool, fluteLength, over, lines }] per tool
+     */
+    findFluteLengthProblems() {
+        const cfg = this.stockConfig;
+        if (!cfg) return [];
+        const byTool = new Map();
+        for (const seg of this.segments) {
+            if (seg.type !== 'cut') continue;
+            const def = cfg.tools.get(seg.toolNumber);
+            if (!def || !(def.fluteLength > 0)) continue;
+            const over = cfg.stock.zmax - Math.min(seg.start.z, seg.end.z) - def.fluteLength;
+            if (over <= 1e-6) continue;
+            let w = byTool.get(seg.toolNumber);
+            if (!w) byTool.set(seg.toolNumber, w = { tool: seg.toolNumber, fluteLength: def.fluteLength, over: 0, lines: [] });
+            w.over = Math.max(w.over, over);
+            if (w.lines[w.lines.length - 1] !== seg.lineNum) w.lines.push(seg.lineNum);
+        }
+        return [...byTool.values()];
+    }
+
+    /**
+     * Grid size for Auto detail: cells about 1/8 of the smallest cutting feature (a tapered
+     * ball's tip, half a V-bit, else the diameter), from 1 to 6 million cells
+     */
+    autoStockCells(cfg) {
+        const s = cfg.stock;
+        const area = (s.xmax - s.xmin) * (s.ymax - s.ymin);
+        let feature = Infinity;
+        for (const def of cfg.tools.values()) {
+            if (!(def.diameter > 0)) continue;
+            let size = def.diameter;
+            if (def.shape === 'taperball' && def.tip > 0) size = Math.min(def.diameter, def.tip);
+            else if (def.shape === 'vbit' || def.shape === 'chamfer') size = def.diameter / 2;
+            feature = Math.min(feature, size);
+        }
+        if (!isFinite(feature)) return 1e6;
+        const cell = feature / 8;
+        return Math.max(1e6, Math.min(6e6, area / (cell * cell)));
+    }
+
+    /**
+     * Carving progress, grid size and warnings for moves that rapid into the stock or cut
+     * deeper than the flutes
+     */
+    updateStockInfo(sim) {
+        const total = Math.min(this.renderer3d.maxSegmentIndex, sim.segments.length);
+        const unit = this.stockConfig.units === 'inches' ? 'in' : 'mm';
+        let html = sim.carvedIndex < total
+            ? `Carving… ${Math.floor(sim.carvedIndex / Math.max(total, 1) * 100)}%`
+            : `${sim.nx} × ${sim.ny} grid, ${+sim.dx.toFixed(3)} ${unit} cells`;
+        const prior = (this.priorJobs || []).filter(job => job.status === 'loaded').length;
+        if (prior > 0) html += `, after ${prior} earlier job${prior === 1 ? '' : 's'}`;
+        for (const w of this.stockFluteWarnings || []) {
+            const lines = w.lines.map(n => this.toDisplayLine(n)).filter(n => n > 0);
+            const shown = lines.slice(0, 5).join(', ') + (lines.length > 5 ? ', …' : '');
+            html += `<span class="stock-warning">⚠️ T${w.tool} cuts ${+w.over.toFixed(3)} ${unit} deeper than its ` +
+                `${+w.fluteLength.toFixed(3)} ${unit} flute length, so the shank would rub` +
+                (shown ? ` (line${lines.length === 1 ? '' : 's'} ${shown})` : '') + '</span>';
+        }
+        if (sim.gouges.size > 0) {
+            const lines = [...sim.gouges].sort((a, b) => a - b)
+                .map(i => this.toDisplayLine(sim.segments[i].lineNum)).filter(n => n > 0);
+            const shown = lines.slice(0, 5).join(', ') + (lines.length > 5 ? ', …' : '');
+            const count = sim.gouges.size;
+            html += `<span class="stock-warning">⚠️ ${count} rapid move${count === 1 ? '' : 's'} cut${count === 1 ? 's' : ''} into the stock` +
+                (shown ? ` (line${lines.length === 1 ? '' : 's'} ${shown})` : '') + '</span>';
+        }
+        this.setStockInfo(html);
+    }
+
+    setStockInfo(html) {
+        if (html === this.stockInfoText) return;
+        this.stockInfoText = html;
+        const info = document.getElementById('stock-info');
+        if (info) info.innerHTML = html;
+    }
+
+    /**
+     * What Reset View and double-click frame: the stock while it's shown, else the toolpaths
+     */
+    viewBounds() {
+        const cfg = this.stockConfig;
+        if (this.stockVisible && cfg && this.stockConfigProblem() === null) {
+            const s = cfg.stock;
+            return { minX: s.xmin, maxX: s.xmax, minY: s.ymin, maxY: s.ymax, minZ: s.zmin, maxZ: s.zmax };
+        }
+        return this.bounds;
+    }
+
+    /**
+     * Size the 3D grid (the machine bed): from the machine's max travel in a loaded
+     * config.yaml, or else a little larger than the stock (5%, at least 10 mm / 0.5 in,
+     * rounded up to 10 mm / 1 in).
+     * A size typed in by hand, or read from a connected FluidNC machine, is kept.
+     */
+    updateGridSize() {
+        const widthInput = document.getElementById('grid-width');
+        const heightInput = document.getElementById('grid-height');
+        if (!widthInput || !heightInput) return;
+        if (!this.gridDefault) this.gridDefault = { width: widthInput.value, height: heightInput.value };
+        if (this.gridUserSet || this.gridFromMachine) return;
+
+        const cfg = this.stockConfig;
+        const inches = (cfg ? cfg.units : this.parser.units) === 'inches';
+        const values = this.parser.machineValues && this.parser.machineValues.values;
+        const travelX = values && values['/axes/x/max_travel_mm'];
+        const travelY = values && values['/axes/y/max_travel_mm'];
+        let width = this.gridDefault.width, height = this.gridDefault.height;
+        if (travelX > 0 && travelY > 0) {
+            width = +(inches ? travelX / 25.4 : travelX).toFixed(2);
+            height = +(inches ? travelY / 25.4 : travelY).toFixed(2);
+        } else if (cfg && this.stockConfigProblem() === null) {
+            const step = inches ? 1 : 10;
+            const around = (size) => Math.max(step, Math.ceil((size + Math.max(size * 0.05, step)) / step) * step);
+            width = around(cfg.stock.xmax);
+            height = around(cfg.stock.ymax);
+        }
+        if (String(width) === widthInput.value && String(height) === heightInput.value) return;
+        widthInput.value = width;
+        heightInput.value = height;
+        widthInput.dispatchEvent(new Event('input', { bubbles: true }));
+        heightInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    /**
+     * Stock bounds guessed from the cutting moves: the cut area plus the largest tool
+     * radius, from the deepest cut up to Z0 (or from Z0 up when the file cuts above zero)
+     */
+    estimateStock(tools, units) {
+        const b = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
+        for (const seg of this.segments) {
+            if (seg.type !== 'cut') continue;
+            for (const p of [seg.start, seg.end]) {
+                b.minX = Math.min(b.minX, p.x); b.maxX = Math.max(b.maxX, p.x);
+                b.minY = Math.min(b.minY, p.y); b.maxY = Math.max(b.maxY, p.y);
+                b.minZ = Math.min(b.minZ, p.z); b.maxZ = Math.max(b.maxZ, p.z);
+            }
+        }
+        let radius = 0;
+        for (const def of tools.values()) radius = Math.max(radius, (def.diameter || 0) / 2);
+        const round = (v) => {
+            const f = units === 'inches' ? 1e4 : 100;
+            return Math.round(v * f) / f;
+        };
+        const tiny = units === 'inches' ? 0.001 : 0.01;
+        let zmin, zmax;
+        if (b.minZ < -tiny) {
+            zmin = b.minZ;
+            zmax = 0;
+        } else {
+            zmin = 0;
+            zmax = b.maxZ > tiny ? b.maxZ : (units === 'inches' ? 0.75 : 19);
+        }
+        return {
+            xmin: round(b.minX - radius), xmax: round(b.maxX + radius),
+            ymin: round(b.minY - radius), ymax: round(b.maxY + radius),
+            zmin: round(zmin), zmax: round(zmax)
+        };
+    }
+
     /**
      * Update statistics panel
      */
@@ -1612,6 +2507,17 @@ class Controller {
     }
 
     /**
+     * Draw the current view now (the render loop also redraws it every frame)
+     */
+    render() {
+        if (this.currentView === '2d') {
+            this.renderer2d.render();
+        } else {
+            this.renderer3d.render();
+        }
+    }
+
+    /**
      * Toggle between 2D and 3D views
      */
     toggleView() {
@@ -1657,6 +2563,10 @@ class Controller {
      * Toggle animation playback
      */
     togglePlayback() {
+        if (this.simPromptAt !== null && this.simPromptAt !== undefined && !this.animator.getIsPlaying()) {
+            this.resumeSim();
+            return;
+        }
         if (this.animator.getIsPlaying()) {
             this.animator.pause();
         } else {
@@ -1688,6 +2598,9 @@ class Controller {
             this.pollSpaceMouse();
             
             this.camera.update();
+            // The drawn tool spins while the animation plays (or, in FluidNC, a job runs),
+            // but not while probing: the spindle is off from attaching the plate to removing it
+            this.renderer3d.toolSpinning = (this.animator.getIsPlaying() || !!this.isRunning) && !this.probing;
             
             if (this.currentView === '2d') {
                 this.renderer2d.render();

@@ -41,6 +41,19 @@ class GCodeParser {
         this.inlineToolMap = new Map(); // Maps tool number to array of sequential indices for inline format
         this.inlineToolOccurrence = new Map(); // Tracks which occurrence of each tool number we're on
         this.lastToolChangeType = null; // 'M0' for manual, 'M6' for automatic, null for none
+        this.toolNumber = null; // Last T word, as written (segment.tool is a display index)
+
+        // Stock simulation metadata from header comments (see parseSimComment)
+        this.simMeta = { units: null, stock: null, tools: new Map(), priorJobs: [] };
+
+        // What a controller UI would show as the job runs, in order: { index, lineNum, kind,
+        // text }. index is the number of segments before it (it happens once those are done).
+        // kind: 'msg' (MSG), 'print' (PRINT), 'debug' (DEBUG), 'pause' (M0), 'end' (M2/M30),
+        // 'probe' (contact), 'alarm' (probe failed)
+        this.events = [];
+        this.pendingStop = null; // M0/M2/M30 on the current line, recorded after its motion
+        // Simulated probing against the stock (see probeMove); created at the first probe
+        this.probeModel = undefined;
         
         // Parametric expansion info for the last parse (null for plain G-code)
         this.expansion = null;
@@ -151,9 +164,15 @@ class GCodeParser {
      * Parse single line of GCode
      */
     parseLine(line, lineNum) {
+        this.collectMessages(line, lineNum);
+
         // Check for tool list in comments
         if (line.startsWith(';') || line.startsWith('(')) {
             const comment = line.replace(/^[;(]/, '').replace(/\)$/, '').trim();
+
+            // Stock and tool geometry for the stock simulation (checked before the
+            // Estlcam tool list, which would otherwise take these lines as tool names)
+            if (this.parseSimComment(comment)) return;
             
             // Check for inline tool definition: (Tool N: tool name)
             const inlineToolMatch = comment.match(/^Tool\s+(\d+)\s*:\s*(.+)$/i);
@@ -273,6 +292,7 @@ class GCodeParser {
                     break;
                 case 'T':
                     const toolNum = Math.floor(value);
+                    this.toolNumber = toolNum;
                     
                     // If using inline tool format, map tool number to sequential index
                     if (this.inlineToolMap.size > 0 && this.inlineToolMap.has(toolNum)) {
@@ -292,6 +312,19 @@ class GCodeParser {
             }
         }
         
+        this.applyModalMotion(motionProcessed, words, lineNum);
+
+        // Program stops take effect after the line's motion
+        if (this.pendingStop) {
+            this.addEvent(this.pendingStop.kind, this.pendingStop.text, lineNum);
+            this.pendingStop = null;
+        }
+    }
+
+    /**
+     * Modal motion: axis words on a line without a motion command use the last one
+     */
+    applyModalMotion(motionProcessed, words, lineNum) {
         // If no motion was processed but we have a modal motion mode, apply it to any coordinates
         if (!motionProcessed && this.motionMode !== null) {
             // Check if position coordinates are present (X/Y/Z)
@@ -318,6 +351,111 @@ class GCodeParser {
     }
 
     /**
+     * Stock simulation header comments, written by a post processor:
+     *   (CNCSIM 1 UNITS=mm)
+     *   (Stock: XMIN=0 XMAX=300 YMIN=0 YMAX=200 ZMIN=-19.05 ZMAX=0)
+     *   (ToolDef 1: SHAPE=flat D=6.35 FLUTES=1 LEN=22 OAL=50 NAME=1/4in upcut)
+     *   (PriorJob: SignName_T1.nc)
+     * Stock bounds are in the file's coordinates; ToolDef numbers are T numbers.
+     * SHAPE is flat, ball, bullnose (CR=corner radius), vbit or chamfer (ANGLE=included
+     * angle in degrees, TIP=flat tip diameter), or taperball (ANGLE=included taper angle,
+     * TIP=ball diameter). LEN is the flute length; FLUTES and OAL (overall length) are only
+     * used to draw the tool; NAME, always last, runs to the end of the line. The first
+     * ToolDef for a tool wins. In files without T words, N is the sequential tool number
+     * (see currentToolNumber). PriorJob names a file in the same folder that runs before this
+     * one, so its cuts are already in the stock; one line per file, oldest first.
+     * Returns true if the comment was one of these.
+     */
+    parseSimComment(comment) {
+        const fields = (text) => {
+            const out = {};
+            for (const [, key, value] of text.matchAll(/([A-Z][A-Z0-9_]*)\s*=\s*([^\s,]+)/gi)) {
+                out[key.toUpperCase()] = value;
+            }
+            return out;
+        };
+        const num = (value) => {
+            const n = parseFloat(value);
+            return isFinite(n) ? n : null;
+        };
+
+        let m = comment.match(/^CNCSIM\b(.*)$/i);
+        if (m) {
+            const units = (fields(m[1]).UNITS || '').toLowerCase();
+            if (units === 'mm' || units === 'in' || units === 'inch' || units === 'inches') {
+                this.simMeta.units = units === 'mm' ? 'mm' : 'inches';
+            }
+            return true;
+        }
+
+        m = comment.match(/^Stock\s*:(.*)$/i);
+        if (m) {
+            const f = fields(m[1]);
+            const stock = {};
+            for (const key of ['XMIN', 'XMAX', 'YMIN', 'YMAX', 'ZMIN', 'ZMAX']) {
+                stock[key.toLowerCase()] = num(f[key]);
+            }
+            if (Object.values(stock).every(v => v !== null) &&
+                stock.xmax > stock.xmin && stock.ymax > stock.ymin && stock.zmax > stock.zmin) {
+                this.simMeta.stock = stock;
+            } else {
+                console.warn('Ignoring incomplete or invalid Stock comment:', comment);
+            }
+            return true;
+        }
+
+        m = comment.match(/^PriorJob\s*:\s*(.+)$/i);
+        if (m) {
+            this.simMeta.priorJobs.push(m[1].trim());
+            return true;
+        }
+
+        m = comment.match(/^ToolDef\s+(\d+)\s*:(.*)$/i);
+        if (m) {
+            // NAME= takes the rest of the line (spaces allowed), so the other fields are
+            // only read from the text before it
+            let body = m[2], name = null;
+            const nameAt = body.search(/(^|\s)NAME=/i);
+            if (nameAt >= 0) {
+                name = body.slice(body.indexOf('=', nameAt) + 1).trim();
+                body = body.slice(0, nameAt);
+            }
+            const f = fields(body);
+            const positive = (value) => { const n = num(value); return n > 0 ? n : null; };
+            const flutes = num(f.FLUTES);
+            const tool = {
+                shape: (f.SHAPE || 'flat').toLowerCase(),
+                diameter: num(f.D),
+                angle: num(f.ANGLE),
+                tip: num(f.TIP) || 0,
+                cornerRadius: num(f.CR) || 0,
+                flutes: Number.isInteger(flutes) && flutes >= 1 ? flutes : 0,
+                fluteLength: positive(f.LEN),   // cutting edge height from the tip
+                overallLength: positive(f.OAL), // whole bit, for drawing only
+                name
+            };
+            const toolNum = parseInt(m[1]);
+            if (!(tool.diameter > 0)) {
+                console.warn('Ignoring ToolDef comment without a diameter:', comment);
+            } else if (this.simMeta.tools.has(toolNum)) {
+                console.warn(`Ignoring a second ToolDef for tool ${toolNum}:`, comment);
+            } else {
+                this.simMeta.tools.set(toolNum, tool);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * T number of the tool in use: the last T word, or for files without T words
+     * (Estlcam's M0 tool changes) the sequential tool number
+     */
+    currentToolNumber() {
+        return this.toolNumber !== null ? this.toolNumber : this.currentTool;
+    }
+
+    /**
      * Extract word pairs from line
      */
     extractWords(line) {
@@ -337,6 +475,13 @@ class GCodeParser {
      */
     processMCode(code, words, lineNum) {
         switch (code) {
+            case 0: // Program pause (FluidNC holds; it ignores M1 optional stops)
+                this.pendingStop = { kind: 'pause', text: 'Program paused (M0)' };
+                break;
+            case 2:
+            case 30:
+                this.pendingStop = { kind: 'end', text: `Program end (M${code})` };
+                break;
             case 6: // Tool change
                 // Tool number is typically set by T command before M6
                 // currentTool is already updated by T command
@@ -352,11 +497,10 @@ class GCodeParser {
         // Sub-codes: G38.2, G59.1, G92.1, ... (tenths, rounded against float noise)
         const sub = Math.round((value - code) * 10);
         switch (code) {
-            case 38: // Probe toward the target, stopping at contact (G38.2-G38.5).
-                // Where it touches isn't known, so the full programmed move is drawn.
+            case 38: // Probe toward the target, stopping at contact (G38.2-G38.5)
                 if (sub < 2 || sub > 5) return false;
                 this.motionMode = 38;
-                return this.linearMove(words, 'probe', lineNum);
+                return this.probeMove(words, sub, lineNum);
             case 10: // Set work offsets
                 return this.setWorkOffset(words);
             case 28: // Go to the stored G28/G30 position, via an intermediate point
@@ -409,6 +553,102 @@ class GCodeParser {
                 return false;
             default:
                 return false;
+        }
+    }
+
+    /**
+     * G38.2/G38.3 straight down in Z, with the stock known from the header, stops where it
+     * touches: on the stock as cut so far, or on a touch plate of thickness P lying on it.
+     * With a P word, FluidNC then sets the active coordinate system so that the contact
+     * point reads as P on that axis (no retract). Other probes, or without a known stock,
+     * are drawn to their programmed end, as where they touch isn't known.
+     */
+    probeMove(words, sub, lineNum) {
+        const target = this.extractTarget(words);
+        const start = this.position;
+        const pWord = words.find(([letter]) => letter === 'P');
+        const plate = pWord ? pWord[1] : 0;
+        const straightDown = target.x === start.x && target.y === start.y && target.z < start.z;
+        const model = sub <= 3 && straightDown ? this.getProbeModel() : null;
+        if (!model) return this.linearMove(words, 'probe', lineNum);
+
+        const contact = model.contactZ(this.segments, start.x, start.y, this.currentToolNumber(), plate);
+        if (contact < target.z) {
+            // Nothing to touch before the end of the move
+            this.linearMove(words, 'probe', lineNum);
+            if (sub === 2) this.addEvent('alarm', 'ALARM: Probe fail: no contact (G38.2)', lineNum);
+            return true;
+        }
+
+        // The start height isn't known when it was jogged by hand, so a plate above it is
+        // taken as probed from a little above (the move is drawn from there)
+        const approach = this.units === 'inches' ? 0.2 : 5;
+        const from = contact < start.z ? { ...start } : { x: start.x, y: start.y, z: contact + approach };
+        this.addSegment({
+            type: 'probe',
+            start: from,
+            end: { x: start.x, y: start.y, z: contact },
+            feedRate: this.feedRate,
+            tool: this.currentTool,
+            toolNumber: this.currentToolNumber(),
+            lineNum,
+            // For drawing the touch plate: where it lies and how thick it is
+            probe: { surface: contact - plate, plate }
+        });
+        this.position = { x: start.x, y: start.y, z: contact };
+        this.updateBounds(this.position);
+        const offset = this.workOffset();
+        const fmt = (v) => v.toFixed(3);
+        let text = `Probe contact at X${fmt(start.x - offset.x)} Y${fmt(start.y - offset.y)} Z${fmt(contact - offset.z)}`;
+        if (pWord) {
+            this.wcsOffsets[this.wcs].z = contact - plate;
+            text += `; offset applied, Z is now ${fmt(plate)}`;
+        }
+        this.addEvent('probe', text, lineNum);
+        return true;
+    }
+
+    /**
+     * Stock to probe against, from the header's Stock and ToolDef lines (null if unknown)
+     */
+    getProbeModel() {
+        if (this.probeModel === undefined) {
+            this.probeModel = this.simMeta.stock && typeof StockProbe !== 'undefined'
+                ? new StockProbe(this.simMeta.stock, this.simMeta.tools)
+                : null;
+        }
+        return this.probeModel;
+    }
+
+    addEvent(kind, text, lineNum) {
+        this.events.push({ index: this.segments.length, lineNum, kind, text });
+    }
+
+    /**
+     * Messages in ( ) comments, as FluidNC reports them: a comment containing MSG shows its
+     * text after the first four characters; PRINT, and DEBUG, (any case) show their text
+     * with #parameters formatted (see formatPrintMessage). ; comments are never messages.
+     */
+    collectMessages(line, lineNum) {
+        if (line.indexOf('(') < 0) return;
+        let i = 0;
+        while (i < line.length) {
+            const c = line[i];
+            if (c === ';') return;
+            if (c !== '(') { i++; continue; }
+            const close = line.indexOf(')', i + 1);
+            const comment = line.slice(i + 1, close < 0 ? line.length : close);
+            i = close < 0 ? line.length : close + 1;
+
+            if (comment.includes('MSG')) {
+                this.addEvent('msg', comment.slice(4).trim(), lineNum);
+            } else if (/^(PRINT|DEBUG),/i.test(comment)) {
+                const kind = comment.slice(0, 5).toUpperCase() === 'PRINT' ? 'print' : 'debug';
+                // Parametric files have their #values filled in by the expander already
+                const text = typeof formatPrintMessage === 'function'
+                    ? formatPrintMessage(comment.slice(6)) : comment.slice(6);
+                this.addEvent(kind, text.trim(), lineNum);
+            }
         }
     }
 
@@ -481,6 +721,7 @@ class GCodeParser {
             end: { ...target },
             feedRate: this.feedRate,
             tool: this.currentTool,
+            toolNumber: this.currentToolNumber(),
             toolChangeType: this.lastToolChangeType,
             lineNum
         });
@@ -521,6 +762,7 @@ class GCodeParser {
                 end: seg.end,
                 feedRate: this.feedRate,
                 tool: this.currentTool,
+                toolNumber: this.currentToolNumber(),
                 lineNum
             });
             this.updateBounds(seg.end);

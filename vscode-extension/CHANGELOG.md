@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Viewer: the animation plays in real time (1x), from each move's estimated time, with a 0.1x to 500x speed range. Probes are shown descending onto a touch plate, with an optional close-up view.
+
+- Viewer: the animation shows `(MSG, …)` and `(PRINT, …)` messages (with parameter values) as a controller UI would, can stop at each `M0` with its prompt, and simulates Z probing against the stock with the `P` plate thickness. Expanding a parametric file fills in the values in `(PRINT, …)` and `(DEBUG, …)` comments.
+
+- Viewer: **Stock Simulation** panel shows the machined part as a 3D solid, carved as the animation plays. Stock and tool sizes come from `(Stock: ...)` / `(ToolDef N: ...)` header comments or are entered in the panel. Rapid moves that cut into the stock are flagged. Jobs split across files are carved in order: `(PriorJob: ...)` comments name the earlier files, which are read from the same folder.
+
 ## 0.3.0
 
 - Renamed to **CNC GCode Tools for FluidNC**, with a new icon

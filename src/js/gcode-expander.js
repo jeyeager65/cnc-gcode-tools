@@ -259,8 +259,9 @@ function _expanderFmt(value) {
 }
 
 // Split a line into code and comments. ( ) comments can appear anywhere in a
-// line; a ; comment runs to the end of it. Comments are never substituted, so
-// FluidNC messages such as (print, x=%d#<x>) pass through unchanged.
+// line; a ; comment runs to the end of it. Comments are never substituted here;
+// the #values in FluidNC messages such as (print, x=%d#<x>) are filled in by
+// GCodeExpander._formatMessages when comments are kept.
 function _expanderSplitComments(line) {
     let code = '';
     const comments = [];
@@ -279,6 +280,38 @@ function _expanderSplitComments(line) {
         i++;
     }
     return { code: code.trim(), comment: comments.join(' ') };
+}
+
+/**
+ * FluidNC's PRINT/DEBUG formatting: %d, %f and %.Nf set the format (0, 4 or N decimals) for
+ * the #values after them, until the next one; the default prints 6 decimals. `value(text,
+ * pos)` reads a #value at pos and returns { value, end }, or null if it can't, in which
+ * case the # is printed as is (as FluidNC does).
+ */
+function formatPrintMessage(text, value = null) {
+    let decimals = 6;
+    let out = '';
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === '%') {
+            if (text[i + 1] === 'd') { decimals = 0; i += 1; continue; }
+            if (text[i + 1] === 'f') { decimals = 4; i += 1; continue; }
+            if (text[i + 1] === '.' && /[0-9]/.test(text[i + 2] || '') && text[i + 3] === 'f') {
+                decimals = parseInt(text[i + 2]);
+                i += 3;
+                continue;
+            }
+        } else if (c === '#' && value) {
+            const read = value(text, i);
+            if (read) {
+                out += read.value.toFixed(decimals);
+                i = read.end - 1;
+                continue;
+            }
+        }
+        out += c;
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +585,34 @@ class GCodeExpander {
         }
     }
 
+    // (PRINT, ...) and (DEBUG, ...) comments with their #values filled in from the values
+    // at this line, as FluidNC prints them, so they still read right once the assignments
+    // are gone. Values that aren't known keep their #. A ; comment is never a message.
+    _formatMessages(comment) {
+        if (!/\((print|debug),/i.test(comment)) return comment;
+        const read = (text, pos) => {
+            try {
+                return _expanderParse(text, pos, this.variables, 'value');
+            } catch (e) {
+                return null;
+            }
+        };
+        let out = '', rest = comment;
+        while (rest.startsWith('(')) {
+            const close = rest.indexOf(')');
+            const end = close < 0 ? rest.length : close + 1;
+            const inner = rest.slice(1, close < 0 ? rest.length : close);
+            const m = /^(print|debug),/i.exec(inner);
+            out += m ? '(' + m[0] + formatPrintMessage(inner.slice(m[0].length), read) + (close < 0 ? '' : ')')
+                     : rest.slice(0, end);
+            rest = rest.slice(end);
+            const space = /^\s*/.exec(rest)[0];
+            out += space;
+            rest = rest.slice(space.length);
+        }
+        return out + rest;
+    }
+
     // ---- One line of G-code: assignments and words ----
     //
     // FluidNC semantics: all assignments on a line are computed from the current
@@ -561,7 +622,7 @@ class GCodeExpander {
     _line(text, lineNo) {
         if (!text.trim()) return;
         const { code, comment } = _expanderSplitComments(text);
-        const keptComment = this.keepComments ? comment : '';
+        const keptComment = this.keepComments ? this._formatMessages(comment) : '';
 
         if (!code) {
             if (keptComment) this._emit(keptComment, lineNo);
@@ -819,5 +880,5 @@ function expandLines(sourceLines, filename, options) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { expandLines, isParametricGCode, highlightParametricGCodeLine, parseFluidNCConfig };
+    module.exports = { expandLines, isParametricGCode, highlightParametricGCodeLine, parseFluidNCConfig, formatPrintMessage };
 }

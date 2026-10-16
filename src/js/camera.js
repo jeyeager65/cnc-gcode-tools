@@ -27,6 +27,17 @@ function quatNormalize(q) {
 }
 
 class Camera {
+    /**
+     * The 3D view after a file loads and on Reset View: from the front-right, 35 degrees
+     * above the work, so depth shows (built like the orbit control does: a turn about
+     * machine Z, then a tilt down from the top view)
+     */
+    static defaultOrientation() {
+        const spin = 25 * Math.PI / 180;        // round to the right
+        const tilt = (90 - 35) * Math.PI / 180;  // down from straight above to 35 degrees up
+        return quatNormalize(quatMul(quatFromRotationVector(0, 0, spin), quatFromRotationVector(tilt, 0, 0)));
+    }
+
     constructor() {
         // 3D view: an orbit around `target`. `orientation` rotates the camera's own
         // axes (right = X, up = Y, back = Z, from target toward the camera) into
@@ -70,8 +81,6 @@ class Camera {
         const depth = bounds.maxZ - bounds.minZ;
 
         const maxDim = Math.max(width, height, depth) || 100;
-        // Reduce orthoScale for tighter 3D view (was 1 + padding, now 0.6 + padding/2)
-        this.orthoScale = this.targetOrthoScale = maxDim * (0.6 + padding / 2);
 
         // Calculate 2D zoom to fit bounds in canvas
         // Use default dimensions if canvas is not visible/sized yet
@@ -99,14 +108,30 @@ class Camera {
         this.targetPan2d = { ...this.pan2d };
         this.targetZoom2d = this.zoom2d;
 
-        // Store initial zoom values for relative zoom display
+        // Store initial zoom values for relative zoom display (the 3D one is below)
         this.initialZoom2d = fitZoom;
-        this.initialOrthoScale = this.orthoScale;
 
-        // Reset 3D view to the standard CNC top view: X right, Y up on screen
+        // Reset the 3D view to an angled view, so depth shows
         this.distance = maxDim * 2;
-        this.orientation = { w: 1, x: 0, y: 0, z: 0 };
+        this.orientation = Camera.defaultOrientation();
         this.targetOrientation = { ...this.orientation };
+
+        // Zoom the 3D view so the bounds' corners, as seen from that angle, fit the canvas
+        const { right, up } = this.getBasis(this.orientation);
+        let halfWidth = 0, halfHeight = 0;
+        for (const x of [bounds.minX, bounds.maxX]) {
+            for (const y of [bounds.minY, bounds.maxY]) {
+                for (const z of [bounds.minZ, bounds.maxZ]) {
+                    const dx = x - centerX, dy = y - centerY, dz = z - centerZ;
+                    halfWidth = Math.max(halfWidth, Math.abs(dx * right.x + dy * right.y + dz * right.z));
+                    halfHeight = Math.max(halfHeight, Math.abs(dx * up.x + dy * up.y + dz * up.z));
+                }
+            }
+        }
+        const aspect = safeCanvasWidth / safeCanvasHeight;
+        const fit = Math.max(halfHeight, halfWidth / aspect) || maxDim / 2;
+        this.orthoScale = this.targetOrthoScale = fit * (1 + padding);
+        this.initialOrthoScale = this.orthoScale;
     }
 
     /**

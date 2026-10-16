@@ -43,6 +43,7 @@ $builds = @(
             "src/js/parser.js",
             "src/js/camera.js",
             "src/js/renderer2d.js",
+            "src/js/stock-sim.js",
             "src/js/renderer3d.js",
             "src/js/animator.js",
             "src/js/controller.js",
@@ -54,6 +55,7 @@ $builds = @(
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
     <script src="js/renderer2d.js"></script>
+    <script src="js/stock-sim.js"></script>
     <script src="js/renderer3d.js"></script>
     <script src="js/animator.js"></script>
     <script src="js/controller.js"></script>
@@ -70,6 +72,7 @@ $builds = @(
             "src/js/parser.js",
             "src/js/camera.js",
             "src/js/renderer2d.js",
+            "src/js/stock-sim.js",
             "src/js/renderer3d.js",
             "src/js/animator.js",
             "src/js/controller.js"
@@ -79,6 +82,7 @@ $builds = @(
     <script src="js/parser.js"></script>
     <script src="js/camera.js"></script>
     <script src="js/renderer2d.js"></script>
+    <script src="js/stock-sim.js"></script>
     <script src="js/renderer3d.js"></script>
     <script src="js/animator.js"></script>
     <script src="js/controller.js"></script>
@@ -265,7 +269,7 @@ Copy-Item -Path "vscode-extension" -Destination $extStage -Recurse
 # The viewer webview and the expander load these from viewer/ (same list as install-vscode-extension.ps1)
 $viewerDir = "$extStage/viewer"
 New-Item -ItemType Directory -Force -Path $viewerDir | Out-Null
-"gcode-expander.js", "parser.js", "camera.js", "renderer2d.js", "renderer3d.js", "animator.js", "controller.js" | ForEach-Object {
+"gcode-expander.js", "parser.js", "camera.js", "renderer2d.js", "stock-sim.js", "renderer3d.js", "animator.js", "controller.js" | ForEach-Object {
     Copy-Item "src/js/$_" $viewerDir
 }
 Copy-Item "src/css/common.css" $viewerDir
