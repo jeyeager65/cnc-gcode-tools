@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>G-code Simulator {{VERSION}}</title>
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/viewer.css">
+    <link rel="stylesheet" href="css/figui.css">
+</head>
+<body data-host="figui" data-version="{{VERSION}}">
+    <!-- A FigUI plugin (dist/figui-plugin). The layout is built by viewer-ui.js -->
+    <div id="viewer-root"></div>
+
+    <script src="js/prefs.js"></script>
+    <script src="js/viewer-ui.js"></script>
+    <script src="js/figui-api.js"></script>
+    <script src="js/gcode-expander.js"></script>
+    <script src="js/parser.js"></script>
+    <script src="js/camera.js"></script>
+    <script src="js/renderer2d.js"></script>
+    <script src="js/stock-sim.js"></script>
+    <script src="js/renderer3d.js"></script>
+    <script src="js/animator.js"></script>
+    <script src="js/controller.js"></script>
+    <script src="js/fluidnc-controller.js"></script>
+    <script src="js/figui-controller.js"></script>
+</body>
+</html>

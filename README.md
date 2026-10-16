@@ -21,7 +21,8 @@ A lightweight, zero-dependency web-based CNC GCode viewer for FluidNC and GRBL C
 - ✅ **Parametric GCode Preview** - FluidNC parameters, conditionals and loops are expanded automatically, with an Expanded/Source toggle
 - ✅ **Completely Offline** - No data transmission, all processing is local
 - ✅ **Touch Optimized** - Pinch zoom, two-finger rotate/pan for tablets
-- ✅ **FluidNC WebUI v3 Extension** - Custom build for FluidNC WebUI v3
+- ✅ **FluidNC WebUI v3 Extension** - Custom build for FluidNC WebUI v3, with a phone layout
+- ✅ **FigUI Plugin** - The viewer inside FigUI, following FigUI's running job
 
 ## 🖼️ Screenshots
 
@@ -47,6 +48,13 @@ Visit the hosted version: [CNC GCode Tools](https://jeyeager65.github.io/cnc-gco
 2. In VS Code: Extensions view → `…` menu → **Install from VSIX…**, or run `code --install-extension cnc-gcode-tools.vsix`
 
 To work on the extension itself, run `vscode-extension/install-vscode-extension.ps1`, which installs it straight from the repo.
+
+### FigUI Plugin
+The viewer also runs as a plugin for [FigUI](https://github.com/figamore/FigUI), a web UI for FluidNC: it fills FigUI's workspace beside the DRO and jog controls, previews files from the SD card with the stock simulation, and follows the job FigUI is running.
+1. Download `figui-plugin.zip` from the [latest release](https://github.com/jeyeager65/cnc-gcode-tools/releases/latest) and unzip it (or build it: `dist/figui-plugin/`)
+2. In FigUI: **Plugins** → **Add** → choose the `figui-plugin` folder (or copy it to `/sd/plugins/`)
+
+See [figui-plugin/README.md](figui-plugin/README.md).
 
 ### Embedded Device Deployment (ESP32/FluidNC)
 
@@ -186,6 +194,7 @@ cnc-gcode-tools/
 │   ├── index.html                # GitHub Pages landing page
 │   ├── gcodeviewer.html          # Standalone viewer UI
 │   ├── gcodeviewer-fluidnc.html  # FluidNC WebUI extension with SD browser
+│   ├── gcodeviewer-figui.html    # FigUI plugin
 │   ├── fontcreator.html          # Font Creator UI
 │   ├── gcodeexpand.html          # Parametric GCode expander UI
 │   ├── js/
@@ -201,13 +210,17 @@ cnc-gcode-tools/
 │   │   ├── controller.js         # Main application logic
 │   │   ├── fluidnc-api.js        # FluidNC WebUI API client
 │   │   ├── fluidnc-controller.js # FluidNC-specific logic
+│   │   ├── figui-api.js          # FigUI plugin bridge
+│   │   ├── figui-controller.js   # FigUI plugin (extends the FluidNC controller)
 │   │   ├── font-creator-app.js        # Font Creator app
 │   │   └── font-creator-controller.js # Font Creator logic
 │   └── css/
 │       ├── common.css            # Shared styles
 │       ├── viewer.css            # Viewer layout (desktop and phone)
 │       ├── fluidnc.css           # FluidNC-specific styles
+│       ├── figui.css             # FigUI plugin colors
 │       └── font-creator.css      # Font Creator styles
+├── figui-plugin/                # FigUI plugin manifest and icon (built to dist/figui-plugin)
 ├── vscode-extension/             # VS Code extension (packaged to .vsix by build.ps1)
 ├── examples/
 │   ├── parametric_bolt_circle.nc # Parametric GCode demo

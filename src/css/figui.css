@@ -1,0 +1,42 @@
+/*
+ * FigUI plugin: the viewer takes FigUI's colors. FigUI sets its theme variables on the
+ * plugin page's root (--bg, --surface, --elevated, --border, --accent, --text-primary,
+ * ...) and updates them when its theme changes. Each falls back to the viewer's own.
+ */
+
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+    --vw-bg: var(--bg, #0c1018);
+    --vw-header: var(--surface, #121826);
+    --vw-pane: var(--surface, #121826);
+    --vw-canvas: var(--bg, #0c1018);
+    --vw-row: var(--elevated, #182033);
+    --vw-row-hover: var(--elevated, #1d2740);
+    --vw-border: var(--border, #252d40);
+    --vw-control: var(--elevated, #182033);
+    --vw-control-border: var(--border-strong, #2c3650);
+    --vw-control-hover: var(--border, #252d40);
+    --vw-text: var(--text-primary, #e2e6f4);
+    --vw-muted: var(--text-muted, #9aa3bd);
+    --vw-accent: var(--accent, #f0a030);
+    --vw-accent-text: var(--accent, #f0a030);
+    --vw-on-accent: var(--bg, #0c1018);
+    --vw-ok: var(--ok, #47c77a);
+    --vw-run: var(--accent, #f0a030);
+    --vw-on-run: var(--bg, #0c1018);
+    --vw-run-strip: color-mix(in srgb, var(--accent, #f0a030) 12%, var(--surface, #121826));
+    --vw-run-border: color-mix(in srgb, var(--accent, #f0a030) 35%, var(--surface, #121826));
+    --canvas-bg: var(--bg, #0c1018);
+    --panel-bg: var(--surface, #121826);
+    --bg-color: var(--surface, #121826);
+    --text-color: var(--text-primary, #e2e6f4);
+    --border-color: var(--border-strong, #2c3650);
+    --button-bg: var(--elevated, #182033);
+    --cut-color: var(--accent, #f0a030);
+}
+
+/* The theme follows FigUI's: no theme buttons */
+.vw[data-host="figui"] #btn-theme,
+.vw[data-host="figui"] #pop-view .vw-row:last-child {
+    display: none !important;
+}

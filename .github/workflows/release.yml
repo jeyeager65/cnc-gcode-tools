@@ -44,6 +44,8 @@ jobs:
           GCODEVIEWER_GZ_SIZE=$(stat -c%s dist/gcodeviewer.html.gz | numfmt --to=iec-i --suffix=B)
           FONTCREATOR_SIZE=$(stat -c%s dist/fontcreator.html | numfmt --to=iec-i --suffix=B)
           GCODEEXPAND_SIZE=$(stat -c%s dist/gcodeexpand.html | numfmt --to=iec-i --suffix=B)
+          FIGUI_SIZE=$(stat -c%s dist/figui-plugin.zip | numfmt --to=iec-i --suffix=B)
+          echo "FIGUI_SIZE=${FIGUI_SIZE}" >> $GITHUB_OUTPUT
           VSIX_FILE=$(ls dist/cnc-gcode-tools-*.vsix)
           VSIX_SIZE=$(stat -c%s "$VSIX_FILE" | numfmt --to=iec-i --suffix=B)
 
@@ -124,6 +126,7 @@ jobs:
             dist/fontcreator.html
             dist/gcodeexpand.html
             dist/cnc-gcode-tools-*.vsix
+            dist/figui-plugin.zip
             dist/CHANGELOG.md
           body: |
             # CNC GCode Tools ${{ steps.version.outputs.VERSION }}
@@ -137,6 +140,7 @@ jobs:
             - **Font Creator**: ${{ steps.sizes.outputs.FONTCREATOR_SIZE }}
             - **GCode Expander**: ${{ steps.sizes.outputs.GCODEEXPAND_SIZE }}
             - **VS Code Extension**: ${{ steps.sizes.outputs.VSIX_SIZE }}
+            - **FigUI Plugin**: ${{ steps.sizes.outputs.FIGUI_SIZE }} (zip; unzip and add the folder in FigUI's Plugins tab)
             
             ## Deployment Instructions
 

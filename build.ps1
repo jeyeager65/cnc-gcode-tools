@@ -9,6 +9,7 @@ if (Test-Path $distDir) {
     Remove-Item $distDir -Recurse -Force
 }
 New-Item -ItemType Directory -Path $distDir | Out-Null
+New-Item -ItemType Directory -Path "$distDir/figui-plugin" | Out-Null
 
 # Check if terser is installed
 $terserInstalled = $null -ne (Get-Command terser -ErrorAction SilentlyContinue)
@@ -97,6 +98,43 @@ $builds = @(
 "@
     },
     @{
+        Name = "FigUI Plugin"
+        SourceHtml = "src/gcodeviewer-figui.html"
+        OutputName = "figui-plugin/index"
+        SkipGzip = $true
+        JsFiles = @(
+            "src/js/prefs.js",
+            "src/js/viewer-ui.js",
+            "src/js/figui-api.js",
+            "src/js/gcode-expander.js",
+            "src/js/parser.js",
+            "src/js/camera.js",
+            "src/js/renderer2d.js",
+            "src/js/stock-sim.js",
+            "src/js/renderer3d.js",
+            "src/js/animator.js",
+            "src/js/controller.js",
+            "src/js/fluidnc-controller.js",
+            "src/js/figui-controller.js"
+        )
+        ScriptTags = @"
+    <script src="js/prefs.js"></script>
+    <script src="js/viewer-ui.js"></script>
+    <script src="js/figui-api.js"></script>
+    <script src="js/gcode-expander.js"></script>
+    <script src="js/parser.js"></script>
+    <script src="js/camera.js"></script>
+    <script src="js/renderer2d.js"></script>
+    <script src="js/stock-sim.js"></script>
+    <script src="js/renderer3d.js"></script>
+    <script src="js/animator.js"></script>
+    <script src="js/controller.js"></script>
+    <script src="js/fluidnc-controller.js"></script>
+    <script src="js/figui-controller.js"></script>
+"@
+        CssFiles = @("src/css/common.css", "src/css/viewer.css", "src/css/figui.css")
+    },
+    @{
         Name = "Font Creator"
         SourceHtml = "src/fontcreator.html"
         OutputName = "fontcreator"
@@ -176,7 +214,8 @@ foreach ($build in $builds) {
     # Inline and minify JavaScript
     Write-Host "Minifying JavaScript..." -ForegroundColor Cyan
     
-    $tempCombined = "dist/temp_combined_$($build.OutputName).js"
+    $tempName = $build.OutputName -replace '[\/]', '_'
+    $tempCombined = "dist/temp_combined_$tempName.js"
     $combinedContent = ""
     foreach ($file in $build.JsFiles) {
         if (Test-Path $file) {
@@ -187,7 +226,7 @@ foreach ($build in $builds) {
     Set-Content -Path $tempCombined -Value $combinedContent
 
     # Minify combined JS
-    $minJsFile = "dist/$($build.OutputName).min.js"
+    $minJsFile = "dist/$tempName.min.js"
     terser $tempCombined --compress passes=3 --mangle --output $minJsFile
     Remove-Item $tempCombined
 
@@ -258,6 +297,16 @@ foreach ($build in $builds) {
     # Clean up temp file
     Remove-Item $minJsFile -ErrorAction SilentlyContinue
 }
+
+# FigUI plugin folder: the built page, its manifest (with this version) and icon.
+# Install it in FigUI (Plugins > Add, choosing the folder) or copy it to /sd/plugins/.
+$pluginVersion = if ($version -match '^v?(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
+(Get-Content "figui-plugin/plugin.json" -Raw) -replace '\{\{PLUGIN_VERSION\}\}', $pluginVersion |
+    Set-Content "$distDir/figui-plugin/plugin.json" -NoNewline
+Copy-Item "figui-plugin/icon.png" "$distDir/figui-plugin/icon.png"
+Copy-Item "figui-plugin/README.md" "$distDir/figui-plugin/README.md"
+Compress-Archive -Path "$distDir/figui-plugin" -DestinationPath "$distDir/figui-plugin.zip" -Force
+Write-Host "FigUI plugin: $distDir/figui-plugin and figui-plugin.zip (version $pluginVersion)" -ForegroundColor Yellow
 
 Write-Host "`nAll builds completed successfully!" -ForegroundColor Green
 
