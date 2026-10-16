@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- A: toolpath — a zig-zag facing pass with a rapid move and the tool position, in the viewer's colors -->
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="#1b2430"/>
+  <!-- faint grid -->
+  <g stroke="#2c3949" stroke-width="2">
+    <path d="M24 24V104M44 24V104M64 24V104M84 24V104M104 24V104"/>
+    <path d="M24 24H104M24 44H104M24 64H104M24 84H104M24 104H104"/>
+  </g>
+  <!-- rapid (G0) in -->
+  <path d="M18 112L34 92" stroke="#9aa7b4" stroke-width="5" stroke-linecap="round" stroke-dasharray="1 9"/>
+  <!-- cutting pass (G1) -->
+  <path d="M34 92H94V78H34V64H94V50H34V36H94" fill="none" stroke="#00e676" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- tool -->
+  <circle cx="94" cy="36" r="9" fill="#ff7043" stroke="#1b2430" stroke-width="3"/>
+</svg>

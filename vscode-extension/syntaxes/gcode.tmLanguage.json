@@ -1,0 +1,148 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "G-code (FluidNC)",
+    "scopeName": "source.fluidnc",
+    "fileTypes": ["gcode", "nc", "gco", "ngc"],
+    "patterns": [
+        { "include": "#comment_block" },
+        { "include": "#comment_line" },
+        { "include": "#assignment" },
+        { "include": "#variable_named" },
+        { "include": "#variable_numbered" },
+        { "include": "#oword_line" },
+        { "include": "#function" },
+        { "include": "#relop" },
+        { "include": "#arith" },
+        { "include": "#system" },
+        { "include": "#gcode" },
+        { "include": "#mcode" },
+        { "include": "#tcode" },
+        { "include": "#scode" },
+        { "include": "#xaxis" },
+        { "include": "#yaxis" },
+        { "include": "#zaxis" },
+        { "include": "#coord" },
+        { "include": "#fcode" },
+        { "include": "#number" },
+        { "include": "#bracket" }
+    ],
+    "repository": {
+
+        "comment_block": {
+            "name": "comment.block.fluidnc",
+            "begin": "\\(",
+            "end": "\\)"
+        },
+
+        "comment_line": {
+            "name": "comment.line.semicolon.fluidnc",
+            "match": ";.*$"
+        },
+
+        "assignment": {
+            "comment": "#<name> = expr  /  #123 = expr  -- target variable and '=' operator",
+            "match": "^\\s*(#(?:<[^>]+>|\\d+))\\s*(=)",
+            "captures": {
+                "1": { "name": "variable.name.fluidnc" },
+                "2": { "name": "keyword.operator.assignment.fluidnc" }
+            }
+        },
+
+        "variable_named": {
+            "name": "variable.name.fluidnc",
+            "match": "#<[^>]+>"
+        },
+
+        "variable_numbered": {
+            "name": "variable.name.fluidnc",
+            "match": "#\\d+"
+        },
+
+        "oword_line": {
+            "comment": "O-word label + control keyword, e.g. o100 while [...], o200 endif",
+            "patterns": [
+                {
+                    "match": "(?i)(\\bO(?:\\d+|<[^>]+>))\\s*(elseif|endif|endwhile|else|while|if|do|repeat|endrepeat|break|continue|return|sub|endsub|call)\\b",
+                    "captures": {
+                        "1": { "name": "keyword.control.label.fluidnc" },
+                        "2": { "name": "keyword.control.flow.fluidnc" }
+                    }
+                },
+                {
+                    "name": "keyword.control.label.fluidnc",
+                    "match": "(?i)\\bO(?:\\d+|<[^>]+>)\\b"
+                }
+            ]
+        },
+
+        "function": {
+            "name": "support.function.fluidnc",
+            "match": "(?i)\\b(?:FUP|FIX|ROUND|ABS|SQRT|ASIN|ACOS|ATAN|SIN|COS|TAN|EXP|LN|EXISTS)\\b"
+        },
+
+        "relop": {
+            "name": "keyword.operator.fluidnc",
+            "match": "(?i)\\b(?:EQ|NE|LT|GT|LE|GE|AND|OR|XOR|MOD)\\b"
+        },
+
+        "arith": {
+            "name": "keyword.operator.arithmetic.fluidnc",
+            "match": "\\*\\*|[*/]"
+        },
+
+        "gcode": {
+            "name": "keyword.other.fluidnc",
+            "match": "(?i)\\bG\\d+(?:\\.\\d+)?"
+        },
+
+        "mcode": {
+            "name": "support.function.fluidnc",
+            "match": "(?i)\\bM\\d+(?:\\.\\d+)?"
+        },
+
+        "tcode": {
+            "name": "entity.name.type.fluidnc",
+            "match": "(?i)T(?:\\d+|(?=[\\[#]))"
+        },
+
+        "scode": {
+            "name": "support.constant.fluidnc",
+            "match": "(?i)S(?:\\d+(?:\\.\\d+)?|(?=[\\[#]))"
+        },
+
+        "xaxis": {
+            "name": "support.type.property-name.fluidnc",
+            "match": "(?i)X(?:[-+]?\\d+(?:\\.\\d+)?|(?=[\\[#]))"
+        },
+
+        "yaxis": {
+            "name": "constant.language.fluidnc",
+            "match": "(?i)Y(?:[-+]?\\d+(?:\\.\\d+)?|(?=[\\[#]))"
+        },
+
+        "zaxis": {
+            "name": "string.quoted.fluidnc",
+            "match": "(?i)Z(?:[-+]?\\d+(?:\\.\\d+)?|(?=[\\[#]))"
+        },
+
+        "coord": {
+            "name": "variable.parameter.fluidnc",
+            "match": "(?i)[ABCIJK](?:[-+]?\\d+(?:\\.\\d+)?|(?=[\\[#]))"
+        },
+
+        "fcode": {
+            "name": "support.type.fluidnc",
+            "match": "(?i)F(?:\\d+(?:\\.\\d+)?|(?=[\\[#]))"
+        },
+
+        "number": {
+            "name": "constant.numeric.fluidnc",
+            "match": "[-+]?\\d+(?:\\.\\d+)?"
+        },
+
+        "bracket": {
+            "name": "punctuation.section.brackets.fluidnc",
+            "match": "[\\[\\]]"
+        }
+    }
+}

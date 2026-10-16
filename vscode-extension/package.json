@@ -1,0 +1,118 @@
+{
+    "name": "gcode-tools",
+    "displayName": "CNC GCode Tools for FluidNC",
+    "description": "Syntax highlighting, parametric expansion, validation and a 2D/3D toolpath viewer for FluidNC G-code. Community project, not affiliated with FluidNC.",
+    "version": "0.3.0",
+    "publisher": "jeyeager65",
+    "icon": "icons/extension-icon.png",
+    "license": "MIT",
+    "engines": { "vscode": "^1.60.0" },
+    "categories": ["Programming Languages"],
+    "keywords": ["gcode", "g-code", "cnc", "fluidnc", "grbl", "linuxcnc"],
+    "main": "./extension.js",
+    "activationEvents": ["onLanguage:fluidnc"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/jeyeager65/cnc-gcode-tools"
+    },
+    "contributes": {
+        "configuration": {
+            "title": "CNC GCode Tools",
+            "properties": {
+                "cncGcode.fluidncConfig": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "resource",
+                    "markdownDescription": "Path to your FluidNC `config.yaml`. Its numeric settings fill in config values such as `#</axes/x/max_travel_mm>` when expanding, viewing or validating parametric G-code. Relative paths start from the workspace folder; `${workspaceFolder}` is also accepted. When empty, a `config.yaml` next to the G-code file or at the root of its workspace folder is used if there is one."
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "fluidnc.expandFile",
+                "title": "Expand GCode",
+                "category": "CNC GCode",
+                "icon": "$(run)"
+            },
+            {
+                "command": "fluidnc.viewFile",
+                "title": "View GCode",
+                "category": "CNC GCode",
+                "icon": "$(open-preview)"
+            },
+            {
+                "command": "fluidnc.validateFile",
+                "title": "Validate GCode",
+                "category": "CNC GCode",
+                "icon": "$(check)"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "fluidnc.expandFile",
+                    "when": "resourceLangId == fluidnc",
+                    "group": "navigation"
+                },
+                {
+                    "command": "fluidnc.viewFile",
+                    "when": "resourceLangId == fluidnc",
+                    "group": "navigation"
+                },
+                {
+                    "command": "fluidnc.validateFile",
+                    "when": "resourceLangId == fluidnc",
+                    "group": "navigation"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "fluidnc.expandFile",
+                    "when": "resourceLangId == fluidnc",
+                    "group": "fluidnc"
+                },
+                {
+                    "command": "fluidnc.viewFile",
+                    "when": "resourceLangId == fluidnc",
+                    "group": "fluidnc"
+                },
+                {
+                    "command": "fluidnc.validateFile",
+                    "when": "resourceLangId == fluidnc",
+                    "group": "fluidnc"
+                }
+            ]
+        },
+        "languages": [
+            {
+                "id": "fluidnc",
+                "aliases": ["G-code (FluidNC)", "FluidNC", "G-code", "GCode", "gcode"],
+                "extensions": [".gcode", ".nc", ".gco", ".ngc"],
+                "icon": {
+                    "light": "./icons/fluidnc-language.svg",
+                    "dark": "./icons/fluidnc-language.svg"
+                },
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "fluidnc",
+                "scopeName": "source.fluidnc",
+                "path": "./syntaxes/gcode.tmLanguage.json"
+            }
+        ],
+        "themes": [
+            {
+                "label": "CNC GCode Dark",
+                "uiTheme": "vs-dark",
+                "path": "./themes/fluidnc-dark.json"
+            },
+            {
+                "label": "CNC GCode Light",
+                "uiTheme": "vs",
+                "path": "./themes/fluidnc-light.json"
+            }
+        ]
+    }
+}
