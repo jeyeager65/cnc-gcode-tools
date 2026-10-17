@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Viewer: probe moves (G38) play at no more than 2x, so at high playback speeds the probe and its M0 prompts no longer blink past.
+- Viewer: an M0 prompt that replaces another pops in, and a Resume within 0.4 s of a prompt appearing is ignored, so a quick second tap (easy on a phone) no longer dismisses the next prompt unseen.
 
 ## 0.6.0
 

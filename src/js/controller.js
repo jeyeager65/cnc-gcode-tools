@@ -1237,7 +1237,7 @@ class Controller {
         });
         pauseAtM0.addEventListener('change', () => {
             save('simPauseAtM0', pauseAtM0.checked);
-            if (!pauseAtM0.checked && this.simPromptAt !== null) this.resumeSim();
+            if (!pauseAtM0.checked && this.simPromptAt !== null) this.resumeSim(true);
         });
         probeCloseUp.addEventListener('change', () => {
             save('simProbeCloseUp', probeCloseUp.checked);
@@ -1355,6 +1355,11 @@ class Controller {
         }
         ui.prompt.querySelector('.sim-prompt-text').textContent = message || 'No message';
         ui.prompt.classList.remove('hidden');
+        // Pop in, so a prompt that replaces another in the same place looks new
+        ui.prompt.classList.remove('sim-prompt-new');
+        void ui.prompt.offsetWidth;
+        ui.prompt.classList.add('sim-prompt-new');
+        this.simPromptShownAt = performance.now();
         this.simPromptAt = pause.index;
         this.simPromptPos = pause.pos;
         this.simPromptLine = this.simEvents[pause.pos].lineNum;
@@ -1367,7 +1372,13 @@ class Controller {
         this.simPromptLine = null;
     }
 
-    resumeSim() {
+    /**
+     * Carry on from an M0. A Resume within 0.4 s of a prompt appearing is ignored (unless
+     * forced): it's a second tap meant for the prompt before, which would otherwise
+     * dismiss this one unseen
+     */
+    resumeSim(force = false) {
+        if (!force && this.simPromptShownAt && performance.now() - this.simPromptShownAt < 400) return;
         const next = this.simPromptNext;
         this.hideSimPrompt();
         this.simShownCount = -1;

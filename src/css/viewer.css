@@ -640,6 +640,11 @@ html body.vw-body {
 .vw .sim-line { padding: 5px 10px; border-radius: 6px; }
 
 .vw .sim-prompt { background: var(--vw-header); border-color: var(--vw-control-border); border-radius: 10px; }
+.vw .sim-prompt.sim-prompt-new { animation: vw-prompt-in 0.25s ease-out; }
+@keyframes vw-prompt-in {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
 .vw .sim-prompt button { height: 40px; padding: 0 20px; background: var(--vw-accent); color: var(--vw-on-accent); font-weight: 600; }
 
 /* ---- Transport bar ---- */
