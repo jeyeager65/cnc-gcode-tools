@@ -113,6 +113,10 @@ class Controller {
             }
         };
         ViewerUI.onFileDrop = (file) => this.loadFile(file);
+        // Full screen, or a phone turned on its side: the view's shape changed, fit it again
+        ViewerUI.onLayoutChange = () => {
+            if (this.bounds) requestAnimationFrame(() => this.fitView());
+        };
 
         window.addEventListener('keydown', (e) => this.handleShortcut(e));
         this.renderRecentFiles();
@@ -345,6 +349,10 @@ class Controller {
             case 'v':
             case 'V':
                 this.setView(this.currentView === '2d' ? '3d' : '2d');
+                break;
+            case 'f':
+            case 'F':
+                ViewerUI.toggleFullscreen();
                 break;
             default:
                 return;
@@ -1464,6 +1472,8 @@ class Controller {
         }
         const meta = document.getElementById('file-meta');
         if (meta) meta.textContent = `${lines} lines · ${this.animator.getFormattedTime()}`;
+        const sumFile = document.getElementById('sum-file');
+        if (sumFile) sumFile.textContent = this.fileName;
         const empty = document.getElementById('vw-empty');
         if (empty) empty.hidden = true;
         this.ui.classList.add('vw-loaded');

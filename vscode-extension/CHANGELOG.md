@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Viewer: a layout for phones on their side (tabs in a rail on the left, a one-row transport bar, no header), and a full screen button (F) where the browser allows it.
 - Viewer: playing the job again from the end skipped every M0 prompt; it now stops at each one, as on the first run.
 - Viewer: probe moves (G38) play at no more than 2x, so at high playback speeds the probe and its M0 prompts no longer blink past.
 - Viewer: an M0 prompt that replaces another pops in, and a Resume within 0.4 s of a prompt appearing is ignored, so a quick second tap (easy on a phone) no longer dismisses the next prompt unseen.

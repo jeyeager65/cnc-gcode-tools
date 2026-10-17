@@ -107,6 +107,8 @@ Both versions include:
 - **View** (middle): opens in 3D. The toolbar at the top right has **2D / 3D**, **Fit** and the view settings (grid size, axes, tool marker, zoom, theme); **+ / −** zoom at the bottom right. The transport bar under the view plays the job.
 - **Sidebar** (right): a one-line summary (time, segments, tools, X/Y/Z ranges), **Toolpaths**, **Stock simulation** and **Warnings**. Sections fold, and stay as you leave them.
 - **Phone** (820 px wide and narrower): one pane at a time, chosen with the tab bar at the bottom: **Files**, **View**, **Job** and **G-code**. Menus open as sheets from the bottom.
+- **Phone on its side** (up to 500 px tall): no header, the tabs become a rail on the left and the transport bar a single row, so the view gets nearly the whole screen. The file name is at the top of the Job tab, and menus open as a sheet on the right.
+- **Full screen** (the corners button on the view's toolbar, or <kbd>F</kbd>) hides the browser's bars, which counts most on a phone. It's shown where the browser allows it: not on an iPhone, which only lets videos go full screen, nor inside the WebUI's or FigUI's frame.
 
 ### Loading Files
 
@@ -150,7 +152,7 @@ The 3D view opens, and Fit returns, at an angle from the front-right, 35° above
 - **Scrub bar**: drag to any point in the job. Colored ticks mark tool changes and diamonds the M0 pauses. Below it: time on the timeline, segment and file line
 - **Speed**: 1x is real time. Each move takes its estimated time from its feed rate, the rapid rates and acceleration, so slow moves such as probing look slow. The menu goes from 0.1x to 500x. Probe moves (G38) play at no more than 2x, so at high speeds the probe and its M0 prompts don't just blink past. The summary's total also allows time for tool changes (30 s at an M0, 10 s at an M6), which the timeline doesn't play
 - **Playback settings** (⚙): messages, M0 stops and the probe close-up (below)
-- **Keyboard**: <kbd>Space</kbd> play / pause, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Home</kbd> / <kbd>End</kbd> start and end, <kbd>[</kbd> <kbd>]</kbd> slower / faster, <kbd>V</kbd> 2D / 3D
+- **Keyboard**: <kbd>Space</kbd> play / pause, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Home</kbd> / <kbd>End</kbd> start and end, <kbd>[</kbd> <kbd>]</kbd> slower / faster, <kbd>V</kbd> 2D / 3D, <kbd>F</kbd> full screen
 
 ### Messages, M0 Pauses and Probing
 While the animation runs, the viewer shows what a controller UI such as FluidTouch or the WebUI would show, using FluidNC's rules:

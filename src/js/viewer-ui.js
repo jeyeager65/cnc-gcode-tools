@@ -36,6 +36,8 @@ const VIEWER_ICONS = {
     chevron: '<svg class="vw-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
     collapse: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
     code: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg>',
+    expand: '<svg class="vw-icon-expand" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+    compress: '<svg class="vw-icon-compress" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
     refresh: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
     tabFiles: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
     tabView: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>',
@@ -44,6 +46,8 @@ const VIEWER_ICONS = {
 };
 
 const ViewerUI = {
+    // The phone layout: narrow screens, and phones on their side (short and wide)
+    PHONE_MEDIA: '(max-width: 820px), (max-height: 500px) and (orientation: landscape)',
     host: null,
     config: null,
     root: null,
@@ -63,7 +67,7 @@ const ViewerUI = {
         target.outerHTML = this.markup(this.config, options);
         this.root = document.getElementById('vw');
         document.body.classList.add('vw-body');
-        this.phoneQuery = window.matchMedia('(max-width: 820px)');
+        this.phoneQuery = window.matchMedia(ViewerUI.PHONE_MEDIA);
         this.bind();
         return this.root;
     },
@@ -176,6 +180,7 @@ const ViewerUI = {
                         <button type="button" id="view-3d" aria-pressed="true">3D</button>
                     </div>
                     <button type="button" class="vw-tool-btn" id="btn-reset-view" disabled>Fit</button>
+                    <button type="button" class="vw-tool-btn vw-square hidden" id="btn-fullscreen" aria-label="Full screen" title="Full screen (F)">${i.expand}${i.compress}</button>
                     <button type="button" class="vw-tool-btn vw-square" id="btn-view-settings" data-pop="pop-view" aria-haspopup="dialog" aria-expanded="false" aria-label="View settings">${i.sliders}</button>
                 </div>
                 <div class="vw-zoom" role="group" aria-label="Zoom">
@@ -230,6 +235,7 @@ const ViewerUI = {
 
         <aside class="vw-pane vw-side" data-pane="job" aria-label="Job">
             <div class="vw-summary" id="summary">
+                <div class="vw-sum-file" id="sum-file"></div>
                 <div class="vw-sum-main"><span class="vw-sum-time" id="sum-time">–</span><span class="vw-muted" id="sum-meta">No file loaded</span></div>
                 <div class="vw-sum-ranges" id="sum-ranges"></div>
                 ${this.host === 'vscode' ? '' : `<div class="vw-sum-actions" id="sum-actions" hidden>
@@ -293,7 +299,7 @@ const ViewerUI = {
         <div class="vw-keys">
             <span><kbd>Space</kbd> play / pause</span><span><kbd>← →</kbd> step</span>
             <span><kbd>Home</kbd> start</span><span><kbd>End</kbd> end</span>
-            <span><kbd>[ ]</kbd> speed</span><span><kbd>V</kbd> 2D / 3D</span>
+            <span><kbd>[ ]</kbd> speed</span><span><kbd>V</kbd> 2D / 3D</span><span><kbd>F</kbd> full screen</span>
         </div>
     </div>
 
@@ -356,10 +362,30 @@ const ViewerUI = {
             this.applyCodeVisibility();
             // Desktop shows every pane; a phone shows the current tab (View if it was Files)
             this.setTab(root.dataset.tab);
+            if (this.onLayoutChange) this.onLayoutChange();
+        });
+        // A phone turned between portrait and landscape
+        window.addEventListener('orientationchange', () => {
+            if (this.onLayoutChange) setTimeout(() => this.onLayoutChange(), 300);
         });
         window.addEventListener('resize', () => {
             if (this.openPopover && !this.isPhone()) this.positionPopover();
         });
+
+        // Full screen, where the browser allows it (not in an iframe without permission,
+        // nor on an iPhone, which only lets videos go full screen)
+        const full = document.getElementById('btn-fullscreen');
+        if (full && document.fullscreenEnabled) {
+            full.classList.remove('hidden');
+            full.addEventListener('click', () => this.toggleFullscreen());
+            document.addEventListener('fullscreenchange', () => {
+                const on = !!document.fullscreenElement;
+                root.classList.toggle('vw-fullscreen', on);
+                full.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+                full.title = on ? 'Exit full screen (F)' : 'Full screen (F)';
+                if (this.onLayoutChange) this.onLayoutChange();
+            });
+        }
 
         // Collapsible sections, remembered per section
         root.addEventListener('click', (e) => {
@@ -478,6 +504,15 @@ const ViewerUI = {
         if (top + h > vh - 8) top = Math.max(8, a.top - h - 6);
         pop.style.left = left + 'px';
         pop.style.top = top + 'px';
+    },
+
+    toggleFullscreen() {
+        if (!document.fullscreenEnabled) return;
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        } else {
+            document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(e => console.warn('Full screen refused:', e));
+        }
     },
 
     setSectionOpen(section, open) {

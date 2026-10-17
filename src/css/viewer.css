@@ -828,6 +828,10 @@ html body.vw-body {
 .vw .vw-sum-time { font-size: 22px; font-weight: 600; }
 .vw .vw-sum-ranges { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--vw-mono); font-size: 12px; color: var(--vw-muted); }
 .vw .vw-sum-ranges:empty { display: none; }
+.vw .vw-sum-file { display: none; font-family: var(--vw-mono); font-size: 13px; overflow-wrap: anywhere; }
+.vw .vw-sum-file:empty { display: none !important; }
+.vw #btn-fullscreen .vw-icon-compress, .vw.vw-fullscreen #btn-fullscreen .vw-icon-expand { display: none; }
+.vw.vw-fullscreen #btn-fullscreen .vw-icon-compress { display: inline; }
 .vw .vw-sum-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .vw .vw-sum-actions[hidden] { display: none; }
 
@@ -994,7 +998,7 @@ html body.vw-body {
 
 /* ---- Phone: one pane at a time ---- */
 
-@media (max-width: 820px) {
+@media (max-width: 820px), (max-height: 500px) and (orientation: landscape) {
     .vw { grid-template-rows: auto minmax(0, 1fr) auto; font-size: 14px; }
 
     .vw .vw-header { min-height: 56px; padding: 6px 12px; gap: 8px; }
@@ -1111,4 +1115,107 @@ html body.vw-body {
     .vw .vw-swatch { min-width: 0; min-height: 0; }
     /* No keyboard to speak of */
     .vw .vw-keys, .vw .vw-keys-label, .vw .vw-keys-divider { display: none; }
+}
+
+/* ---- Phone on its side: the view gets nearly the whole screen ---- */
+
+@media (max-height: 500px) and (orientation: landscape) {
+    .vw {
+        grid-template-columns: calc(64px + env(safe-area-inset-left, 0px)) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+        font-size: 13px;
+    }
+
+    /* No header: the file name is in the Job summary, the file menu is the Files tab */
+    .vw .vw-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 40;
+        height: 0;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+    }
+    .vw .vw-header > :not(.vw-progress) { display: none !important; }
+    .vw .vw-header .vw-progress { top: 0; bottom: auto; }
+    .vw .vw-body, .vw.vw-code-hidden .vw-body { grid-column: 2; grid-row: 1; }
+    .vw .vw-sum-file { display: block; }
+
+    /* Tabs: a rail down the left side */
+    .vw .vw-tabs {
+        grid-column: 1;
+        grid-row: 1;
+        grid-auto-flow: row;
+        grid-auto-rows: minmax(0, 1fr);
+        grid-auto-columns: auto;
+        height: auto;
+        padding: 0 0 0 env(safe-area-inset-left, 0px);
+        border-top: 0;
+        border-right: 1px solid var(--vw-border);
+    }
+
+    .vw .vw-tab { font-size: 11px; }
+    .vw .vw-tab svg { width: 20px; height: 20px; }
+    .vw .vw-tab.active::before { top: 50%; left: 0; width: 3px; height: 28px; margin: -14px 0 0 0; border-radius: 0 2px 2px 0; }
+
+    /* View overlays, smaller */
+    .vw .vw-toolbar { top: 6px; right: 6px; gap: 6px; }
+    .vw .vw-toolbar .vw-seg button { width: 40px; height: 38px; }
+    .vw .vw-tool-btn { height: 40px; }
+    .vw .vw-tool-btn.vw-square { width: 40px; }
+    .vw .vw-coords { top: 6px; left: 6px; font-size: 11px; }
+    .vw .vw-zoom { top: 54px; right: 6px; }
+    .vw .vw-zoom button { width: 40px; height: 40px; }
+    .vw .sim-console { left: 6px; bottom: 6px; font-size: 11px; max-width: calc(100% - 60px); }
+    .vw .sim-line { padding: 3px 8px; }
+    .vw .sim-prompt { padding: 12px 16px; }
+
+    /* Transport: one slim row */
+    .vw .vw-transport {
+        grid-template-columns: auto minmax(120px, 1fr) auto auto;
+        grid-template-areas: "buttons scrub speed gear";
+        gap: 10px;
+        padding: 6px 10px calc(6px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .vw .vw-tp-buttons { gap: 6px; }
+    .vw .vw-tp-buttons .vw-round { width: 40px; height: 40px; }
+    .vw .vw-play { width: 48px; height: 44px; border-radius: 22px; }
+    .vw .vw-play svg { width: 20px; height: 20px; }
+    .vw .vw-scrub, .vw .vw-scrub input[type="range"] { height: 24px; }
+    .vw .vw-scrub input[type="range"]::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -7px; }
+    .vw .vw-mark { top: 4px; }
+    .vw .vw-mark.vw-mark-m0 { top: 8px; }
+    .vw .vw-tp-read { justify-content: flex-start; font-size: 11px; }
+    .vw .vw-tp-speed select { height: 40px; min-width: 60px; }
+    .vw #btn-playback-settings { width: 44px; height: 40px; }
+
+    /* Running job: progress and the hold button side by side */
+    .vw .vw-run-strip { padding: 6px 12px; }
+    .vw .vw-runbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "track hold" "times hold";
+        align-items: center;
+        gap: 6px 14px;
+        padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+    .vw .vw-runbar.hidden { display: none; }
+    .vw .vw-run-track { grid-area: track; }
+    .vw .vw-run-times { grid-area: times; font-size: 12px; }
+    .vw .vw-hold { grid-area: hold; height: 48px; padding: 0 18px; font-size: 14px; }
+
+    /* Menus: a sheet on the right, so the view stays in sight */
+    .vw .vw-pop {
+        left: auto !important;
+        right: 0 !important;
+        top: 0 !important;
+        bottom: 0;
+        width: min(380px, 70vw);
+        max-height: none;
+        border-radius: 14px 0 0 14px;
+        padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+    }
 }
