@@ -1160,6 +1160,7 @@ class Controller {
         this.simPauses = [];
         this.simEvents.forEach((e, pos) => { if (e.kind === 'pause') this.simPauses.push({ index: e.index, pos }); });
         this.simPauseNext = 0;
+        this.simLastIndex = undefined;
         this.simShownCount = -1;
 
         // Simulated probes: from the M0 that asks for the plate (the probe's own position)
@@ -1258,6 +1259,11 @@ class Controller {
         if (!this.simEvents || this.simEvents.length === 0) return { index, segmentProgress };
         const ui = this.simUI;
         const playing = this.animator.getIsPlaying();
+        // Playing backwards in the job means it started over (Play at the end restarts
+        // from the beginning): the pauses after this point haven't happened yet
+        if (playing && this.simLastIndex !== undefined && index < this.simLastIndex) {
+            this.simPauseNext = this.simPauses.filter(p => p.index < index).length;
+        }
         if (playing) {
             while (this.simPauseNext < this.simPauses.length && this.simPauses[this.simPauseNext].index <= index) {
                 const pause = this.simPauses[this.simPauseNext++];
@@ -1274,6 +1280,8 @@ class Controller {
             this.simPauseNext = this.simPauses.filter(p => p.index < index).length;
             if (this.simPromptAt !== null && index !== this.simPromptAt) this.hideSimPrompt();
         }
+        // The position shown (an M0 that stopped playback pulls it back to the M0)
+        this.simLastIndex = index;
         this.updateSimMessages(index);
         this.updateProbeView(index, playing);
         return { index, segmentProgress };
