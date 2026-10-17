@@ -2,7 +2,7 @@
     "name": "gcode-tools",
     "displayName": "CNC GCode Tools for FluidNC",
     "description": "Syntax highlighting, parametric expansion, validation and a 2D/3D toolpath viewer for FluidNC G-code. Community project, not affiliated with FluidNC.",
-    "version": "0.6.0",
+    "version": "0.6.1",
     "publisher": "jeyeager65",
     "icon": "icons/extension-icon.png",
     "license": "MIT",
