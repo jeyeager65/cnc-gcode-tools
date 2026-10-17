@@ -1,0 +1,11 @@
+{
+  "name": "G-code Simulator",
+  "description": "Preview SD card G-code in 3D with the machined stock, parametric G-code, M0 and probe playback, and follow the running job.",
+  "version": "0.6.1",
+  "entry": "index.html",
+  "icon": "icon.png",
+  "layout": "workspace",
+  "layoutTablet": "full",
+  "layoutMobile": "full",
+  "files": ["index.html", "icon.png"]
+}
