@@ -66,12 +66,54 @@ class Animator {
         // is real time. segmentEndTimes[i] is when move i ends, in seconds.
         const n = this.segments.length;
         this.segmentEndTimes = new Float64Array(n);
+        // When each probe move starts: playback slows down for them (advanceTime)
+        this.probeStarts = [];
         let time = 0;
         for (let i = 0; i < n; i++) {
-            time += this.segmentMoveTimes ? this.segmentMoveTimes[i] : 0;
+            const moveTime = this.segmentMoveTimes ? this.segmentMoveTimes[i] : 0;
+            if (this.segments[i].type === 'probe' && moveTime > 0) this.probeStarts.push(time);
+            time += moveTime;
             this.segmentEndTimes[i] = time;
         }
         this.totalAnimTime = time;
+    }
+
+    /**
+     * The move in progress at time t on the timeline: the first that ends after t
+     */
+    indexAtTime(t) {
+        let left = 0;
+        let right = this.segmentEndTimes.length - 1;
+        while (left < right) {
+            const mid = Math.floor((left + right) / 2);
+            if (this.segmentEndTimes[mid] <= t) left = mid + 1;
+            else right = mid;
+        }
+        return left;
+    }
+
+    /**
+     * The timeline after a frame of `dt` seconds at the playback speed. Probe moves play
+     * at no more than Animator.PROBE_MAX_SPEED, so at high speeds the probe, the touch
+     * plate and its M0 prompts don't just blink past. A frame that would run into a probe
+     * at full speed stops at the probe's start, and the probe plays from there.
+     */
+    advanceTime(t, dt) {
+        const cap = Animator.PROBE_MAX_SPEED;
+        const index = this.indexAtTime(t);
+        const inProbe = index < this.segments.length && this.segments[index].type === 'probe';
+        const speed = inProbe ? Math.min(this.speed, cap) : this.speed;
+        let next = t + dt * speed;
+        if (speed > cap && this.probeStarts && this.probeStarts.length > 0) {
+            // The first probe starting after t
+            let lo = 0, hi = this.probeStarts.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (this.probeStarts[mid] <= t) lo = mid + 1; else hi = mid;
+            }
+            if (lo < this.probeStarts.length && this.probeStarts[lo] < next) next = this.probeStarts[lo];
+        }
+        return next;
     }
 
     /**
@@ -446,21 +488,11 @@ class Animator {
         
         // Each move takes its estimated time (1x = real time)
         if (this.totalAnimTime > 0) {
-            this.accumulatedTime += deltaTime * this.speed;
+            this.accumulatedTime = this.advanceTime(this.accumulatedTime, deltaTime);
             const targetTime = this.accumulatedTime;
 
             // The move in progress: the first that ends after targetTime
-            let left = 0;
-            let right = this.segmentEndTimes.length - 1;
-            while (left < right) {
-                const mid = Math.floor((left + right) / 2);
-                if (this.segmentEndTimes[mid] <= targetTime) {
-                    left = mid + 1;
-                } else {
-                    right = mid;
-                }
-            }
-            const targetIndex = left;
+            const targetIndex = this.indexAtTime(targetTime);
 
             // How far through it
             const segStart = this.segmentStartTime(targetIndex);
@@ -569,3 +601,6 @@ class Animator {
         return this.isPlaying;
     }
 }
+
+// Fastest playback for probe moves (G38), as a multiple of real time
+Animator.PROBE_MAX_SPEED = 2;

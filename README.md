@@ -148,7 +148,7 @@ The 3D view opens, and Fit returns, at an angle from the front-right, 35° above
 ### Transport Bar
 - **Play/Pause**, **Back to start** and **Step back / forward**
 - **Scrub bar**: drag to any point in the job. Colored ticks mark tool changes and diamonds the M0 pauses. Below it: time on the timeline, segment and file line
-- **Speed**: 1x is real time. Each move takes its estimated time from its feed rate, the rapid rates and acceleration, so slow moves such as probing look slow. The menu goes from 0.1x to 500x. The summary's total also allows time for tool changes (30 s at an M0, 10 s at an M6), which the timeline doesn't play
+- **Speed**: 1x is real time. Each move takes its estimated time from its feed rate, the rapid rates and acceleration, so slow moves such as probing look slow. The menu goes from 0.1x to 500x. Probe moves (G38) play at no more than 2x, so at high speeds the probe and its M0 prompts don't just blink past. The summary's total also allows time for tool changes (30 s at an M0, 10 s at an M6), which the timeline doesn't play
 - **Playback settings** (⚙): messages, M0 stops and the probe close-up (below)
 - **Keyboard**: <kbd>Space</kbd> play / pause, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Home</kbd> / <kbd>End</kbd> start and end, <kbd>[</kbd> <kbd>]</kbd> slower / faster, <kbd>V</kbd> 2D / 3D
 

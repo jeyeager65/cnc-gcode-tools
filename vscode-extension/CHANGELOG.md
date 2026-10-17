@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Viewer: probe moves (G38) play at no more than 2x, so at high playback speeds the probe and its M0 prompts no longer blink past.
+
 ## 0.6.0
 
 The version now matches the web viewer, the FluidNC extension and the FigUI plugin, which are released together.
