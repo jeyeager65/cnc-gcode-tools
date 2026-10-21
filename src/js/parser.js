@@ -274,6 +274,10 @@ class GCodeParser {
         // G30, G92), so the modal motion mode must not turn them into a move.
         let motionProcessed = false;
         this.lineMachineCoords = words.some(([letter, value]) => letter === 'G' && value === 53);
+        // Units (G20/G21) take effect before anything else on the line, as on a controller, so
+        // the line's own words (F included) are read in the new units
+        const unitsWord = words.find(([letter, value]) => letter === 'G' && (value === 20 || value === 21));
+        if (unitsWord) this.setUnits(unitsWord[1] === 20 ? 'inches' : 'mm');
         // A feed rate applies to the move on its own line, wherever the F word is
         const feedWord = words.find(([letter]) => letter === 'F');
         if (feedWord) this.feedRate = feedWord[1];
@@ -471,6 +475,24 @@ class GCodeParser {
     }
 
     /**
+     * Switch units (G20/G21). The machine doesn't move, so the current position, the work
+     * offsets and G92 are carried over into the new units, and so is the modal feed rate
+     * (a speed: FluidNC/Grbl keep it in mm/min). Segments stay in the units of their move.
+     */
+    setUnits(units) {
+        if (units === this.units) return;
+        const k = units === 'inches' ? 1 / 25.4 : 25.4;
+        // New objects: segments may still hold the old position
+        const scale = (p) => p && { x: p.x * k, y: p.y * k, z: p.z * k };
+        this.position = scale(this.position);
+        this.g92 = scale(this.g92);
+        this.g92Saved = scale(this.g92Saved);
+        this.wcsOffsets = this.wcsOffsets.map(scale);
+        this.feedRate *= k;
+        this.units = units;
+    }
+
+    /**
      * Process M-code command
      */
     processMCode(code, words, lineNum) {
@@ -539,11 +561,11 @@ class GCodeParser {
             case 19: // YZ plane
                 this.plane = 'YZ';
                 return false;
-            case 20: // Inches
-                this.units = 'inches';
+            case 20: // Inches (switched before the line's other words: see parseLine)
+                this.setUnits('inches');
                 return false;
             case 21: // Millimeters
-                this.units = 'mm';
+                this.setUnits('mm');
                 return false;
             case 90: // Absolute positioning
                 this.absolute = true;

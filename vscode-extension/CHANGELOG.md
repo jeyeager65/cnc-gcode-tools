@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Viewer: G20/G21 carry the current position, work offsets and feed rate over into the new units, and take effect before the rest of their line, as on a controller. A move after a unit switch with no Z word no longer reads the old Z in the wrong units, and `G20 G1 X1 F10` reads F10 as inches.
+
 ## 0.6.1
 
 - Viewer: a layout for phones on their side (tabs in a rail on the left, a one-row transport bar, no header), and a full screen button (F) where the browser allows it.
