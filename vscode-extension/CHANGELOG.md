@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.2
 
 - Viewer: G20/G21 carry the current position, work offsets and feed rate over into the new units, and take effect before the rest of their line, as on a controller. A move after a unit switch with no Z word no longer reads the old Z in the wrong units, and `G20 G1 X1 F10` reads F10 as inches.
 - Viewer: stock simulation tools are drawn with a 45° flute helix (was 30°), so single-flute bits read as a spiral instead of looking bent.
