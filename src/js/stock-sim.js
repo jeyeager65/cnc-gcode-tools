@@ -1067,14 +1067,15 @@ class StockMeshRenderer {
 
     /**
      * Triangles for the cutting part: the outline turned about the axis, with `tool.flutes`
-     * gullies cut into it that twist at a 30° helix (straight for V and chamfer bits) and
+     * gullies cut into it that twist at a 45° helix (straight for V and chamfer bits) and
      * run out below the shank. Normals come from the surface's own slopes.
      */
     fluted(outline, tool, fluteTop, positions, normals) {
         const r = tool.radius;
         const sides = tool.flutes > 0 ? 96 : 32;
         const depth = 0.42; // gully depth, as a fraction of the radius
-        const twist = tool.straightFlutes ? 0 : Math.tan(30 * Math.PI / 180) / r; // radians per unit up
+        // 45°: at 30° a single flute makes under a turn and the bit reads as bent
+        const twist = tool.straightFlutes ? 0 : Math.tan(45 * Math.PI / 180) / r; // radians per unit up
         const runout = r * 1.5; // gullies fade out over this height below the top
 
         const point = (rad, z, theta) => {
