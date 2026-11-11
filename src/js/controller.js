@@ -2274,7 +2274,7 @@ class Controller {
         const unit = cfg.units === 'inches' ? 'in' : 'mm';
         const value = (v) => v === null || v === undefined ? '' : String(+v.toFixed(4));
         const s = cfg.stock;
-        const shapes = { flat: 'Flat end mill', ball: 'Ball nose', bullnose: 'Bull nose', vbit: 'V-bit', chamfer: 'Chamfer', taperball: 'Tapered ball nose' };
+        const shapes = { flat: 'Flat end mill', ball: 'Ball nose', bullnose: 'Bull nose', vbit: 'V-bit', chamfer: 'Chamfer', taperball: 'Tapered ball nose', roundover: 'Roundover' };
 
         let html = `<div class="stock-bounds"><span></span><span class="stock-head">Min (${unit})</span><span class="stock-head">Max (${unit})</span>`;
         for (const axis of ['x', 'y', 'z']) {
@@ -2293,9 +2293,9 @@ class Controller {
                     <label class="stock-shape">Shape<select data-field="shape">${options}</select></label>
                     <label>Diameter (${unit})<input type="number" step="any" min="0" data-field="diameter" value="${value(def.diameter)}"></label>
                     <label data-shapes="vbit chamfer taperball">Angle (°)<input type="number" step="any" min="0" max="179" data-field="angle" value="${value(def.angle)}"></label>
-                    <label data-shapes="vbit chamfer">Tip diameter (${unit})<input type="number" step="any" min="0" data-field="tip" value="${value(def.tip)}"></label>
+                    <label data-shapes="vbit chamfer roundover">Tip diameter (${unit})<input type="number" step="any" min="0" data-field="tip" value="${value(def.tip)}"></label>
                     <label data-shapes="taperball">Ball diameter (${unit})<input type="number" step="any" min="0" data-field="tip" value="${value(def.tip)}"></label>
-                    <label data-shapes="bullnose">Corner radius (${unit})<input type="number" step="any" min="0" data-field="cornerRadius" value="${value(def.cornerRadius)}"></label>
+                    <label data-shapes="bullnose roundover">Corner radius (${unit})<input type="number" step="any" min="0" data-field="cornerRadius" value="${value(def.cornerRadius)}"></label>
                     <label title="Only used to draw the tool">Flutes<input type="number" step="1" min="0" max="12" data-field="flutes" value="${def.flutes || ''}"></label>
                     <label title="Cutting edge height from the tip: deeper cuts are flagged">Flute length (${unit})<input type="number" step="any" min="0" data-field="fluteLength" value="${value(def.fluteLength)}"></label>
                     <label title="Only used to draw the tool">Overall length (${unit})<input type="number" step="any" min="0" data-field="overallLength" value="${value(def.overallLength)}"></label>
@@ -2474,7 +2474,7 @@ class Controller {
             if (!(def.diameter > 0)) continue;
             let size = def.diameter;
             if (def.shape === 'taperball' && def.tip > 0) size = Math.min(def.diameter, def.tip);
-            else if (def.shape === 'vbit' || def.shape === 'chamfer') size = def.diameter / 2;
+            else if (def.shape === 'vbit' || def.shape === 'chamfer' || def.shape === 'roundover') size = def.diameter / 2;
             feature = Math.min(feature, size);
         }
         if (!isFinite(feature)) return 1e6;

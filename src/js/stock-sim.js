@@ -5,7 +5,7 @@
  * undercuts, so the top surface describes the part fully; accuracy is set by the grid.
  */
 
-const STOCK_TOOL_SHAPES = ['flat', 'ball', 'bullnose', 'vbit', 'chamfer', 'taperball'];
+const STOCK_TOOL_SHAPES = ['flat', 'ball', 'bullnose', 'vbit', 'chamfer', 'taperball', 'roundover'];
 
 /**
  * Tool geometry -> { radius, profile(d), flutes }, where profile is how far above the tool
@@ -57,6 +57,19 @@ function compileStockToolProfile(def) {
                 profile: (d) => d <= rt
                     ? ballR - Math.sqrt(Math.max(0, ballR * ballR - d * d))
                     : zt + (d - rt) * slope
+            };
+        }
+        case 'roundover': {
+            // Concave arc of radius CR, rising from the edge of a tip of diameter TIP (0 = a sharp
+            // point). Below D it levels off into a flat shoulder; a real bit's nominal CR can
+            // also run past D, cutting the arc off there. CR 0 = what just fits D.
+            const t = Math.min(Math.max((def.tip || 0) / 2, 0), r);
+            const cr = def.cornerRadius > 0 ? def.cornerRadius : r - t;
+            if (!(cr > 0)) return { radius: r, flat: true, profile: () => 0 };
+            const end = t + cr;
+            return {
+                radius: r, flat: false,
+                profile: (d) => d <= t ? 0 : d >= end ? cr : Math.sqrt(Math.max(0, cr * cr - (end - d) * (end - d)))
             };
         }
         case 'vbit':
@@ -1155,6 +1168,7 @@ function guessStockToolFromName(name, units = 'mm') {
     let shape = 'flat';
     if (/taper/.test(n) && /ball/.test(n)) shape = 'taperball';
     else if (/ball/.test(n)) shape = 'ball';
+    else if (/round\s*-?\s*over/.test(n)) shape = 'roundover';
     else if (/bull|corner\s*rad/.test(n)) shape = 'bullnose';
     else if (/chamfer/.test(n)) shape = 'chamfer';
     else if (/v[\s-]?(bit|carv|groove)|engrav|°|\bdeg/.test(n)) shape = 'vbit';

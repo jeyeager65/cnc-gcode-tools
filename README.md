@@ -176,7 +176,7 @@ It needs the size of the stock and of every tool that cuts. A post processor can
 
 - `Stock` gives the bounds in the file's own coordinates, so where Z0 is (stock top or spoilboard) and where the XY origin is don't matter
 - `ToolDef N` matches the T number of `T1 M6`, not the order tools appear in
-- `SHAPE` is `flat`, `ball`, `bullnose` (`CR` = corner radius), `vbit` or `chamfer` (`ANGLE` = included angle in degrees, `TIP` = flat tip diameter), or `taperball` (`ANGLE` = included taper angle, `TIP` = ball diameter)
+- `SHAPE` is `flat`, `ball`, `bullnose` (`CR` = corner radius), `vbit` or `chamfer` (`ANGLE` = included angle in degrees, `TIP` = flat tip diameter), `taperball` (`ANGLE` = included taper angle, `TIP` = ball diameter), or `roundover` (`CR` = profile radius, `TIP` = tip diameter, 0 for a point)
 - `FLUTES=<count>` is optional on any ToolDef and only changes how the tool is drawn.
 - `CNCSIM` is optional. All sizes are in the file's units (G20/G21).
 - For a job split into files that build on each other (one per bit, say), each file lists the files that run before it with `(PriorJob: <file name>)`, oldest first. Their cuts are made first. VS Code and the FluidNC extension read them from the same folder; in the standalone viewer, choose them under **Earlier jobs** with **Add files…**.

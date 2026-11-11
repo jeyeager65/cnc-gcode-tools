@@ -92,6 +92,7 @@ Files added without a `PriorJob` line are put at the end of the list, in name or
 | `vbit` | V-bit / engraving bit | `ANGLE`: **included** angle in degrees (60 for a 60° bit). `TIP`: flat tip diameter, default 0 |
 | `chamfer` | Chamfer mill | Same as `vbit` |
 | `taperball` | Tapered ball nose: a ball tip blending into a cone that widens to `D` | `ANGLE`: **included** taper angle in degrees. `TIP`: ball diameter |
+| `roundover` | Point-cutting or plunging roundover: a concave quarter-circle from the tip out to the shoulder, with no bearing | `CR`: profile radius, default `D/2 − TIP/2`. `TIP`: tip diameter, default 0 for a sharp point |
 
 - An unknown `SHAPE` is treated as `flat`.
 - A missing or invalid `ANGLE` on `vbit`, `chamfer` or `taperball` defaults to 90.
@@ -100,6 +101,11 @@ Files added without a `PriorJob` line are put at the end of the list, in name or
   - For `0 ≤ z ≤ z_t`: `R(z) = sqrt(r² − (r − z)²)`.
   - For `z > z_t`: `R(z) = min(D/2, r·cos a + (z − z_t)·tan a)`.
   - `ANGLE=0` gives a cylinder of radius `r`. `D ≤ TIP` is treated as a ball nose of diameter `D`.
+- `roundover` with tip radius `t = TIP/2` has this profile, where z(d) is the height above the tip at distance d from the axis:
+  - For `d ≤ t`: `z = 0`.
+  - For `t < d < t + CR`: `z = sqrt(CR² − (t + CR − d)²)`.
+  - For `d ≥ t + CR`: `z = CR`, a flat shoulder out to `D/2`.
+  - If `t + CR` is more than `D/2`, as with a nominal 1/8" radius on a 1/4" bit with a small tip, the arc just stops at `D/2`.
 - The simulation models a vertical tool on a 3-axis machine and can't show undercuts, so dovetail and slotting cutters can only be approximated.
 
 ### Files without T words
@@ -146,6 +152,7 @@ FreeCAD property names have changed between versions, so check these against the
 | `v-bit` | `vbit` | `D = Diameter`, `ANGLE = CuttingEdgeAngle`, `TIP = TipDiameter` |
 | `chamfer` | `chamfer` | `D = Diameter`, `ANGLE = CuttingEdgeAngle`, `TIP = TipDiameter` |
 | `taperedballnose` | `taperball` | `D = TaperDiameter`, `ANGLE = TaperAngle` (included angle), `TIP = Diameter` (ball diameter) |
+| `radius` | `roundover` | `D = Diameter`, `CR = CuttingRadius`, `TIP = TipDiameter` |
 | `drill` | `vbit` | `D = Diameter`, `ANGLE = TipAngle` (often 118) |
 | anything else | `flat` | `D = Diameter` (approximation) |
 

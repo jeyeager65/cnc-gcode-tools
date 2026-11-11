@@ -362,8 +362,9 @@ class GCodeParser {
      *   (PriorJob: SignName_T1.nc)
      * Stock bounds are in the file's coordinates; ToolDef numbers are T numbers.
      * SHAPE is flat, ball, bullnose (CR=corner radius), vbit or chamfer (ANGLE=included
-     * angle in degrees, TIP=flat tip diameter), or taperball (ANGLE=included taper angle,
-     * TIP=ball diameter). LEN is the flute length; FLUTES and OAL (overall length) are only
+     * angle in degrees, TIP=flat tip diameter), taperball (ANGLE=included taper angle,
+     * TIP=ball diameter), or roundover (CR=profile radius, TIP=tip diameter, 0 = a point).
+     * LEN is the flute length; FLUTES and OAL (overall length) are only
      * used to draw the tool; NAME, always last, runs to the end of the line. The first
      * ToolDef for a tool wins. In files without T words, N is the sequential tool number
      * (see currentToolNumber). PriorJob names a file in the same folder that runs before this
